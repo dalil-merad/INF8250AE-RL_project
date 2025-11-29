@@ -532,31 +532,25 @@ class PathPlanningScenario(BaseScenario):
 
         # Lidar.measure() renvoie un vecteur de 360 distances (une par rayon)
         lidar_distances = agent.sensors[0].measure() # (B, 360)
-        lidar_angles = torch.tile(torch.arange(0, 2 * np.pi, 2 * np.pi / 360, device=self.world.device), (self.world.batch_dim, 1)) # (B, 360)
-        # 1. Calculer les coordonnées relatives au but (Delta X, Delta Y)
+
+        # Pour respecter les 720 données (360 angles, 360 distances), nous devons créer l'information d'angle.
+        lidar_angles = torch.tile(torch.linspace(start=0, end=360, steps=360), (1, 1)) # (B, 360)
+        lidar_mesures = torch.stack((lidar_distances, lidar_angles), dim=2) # (B, 360, 2)
+        lidar_mesures = lidar_mesures.transpose(1, 2) # (B, 2, 360)
+        lidar_mesures = lidar_mesures.reshape(2, 18, 20) # (B, 2, 18, 20)
+
+        # Calculer les coordonnées relatives au but (Delta X, Delta Y)
         # C'est la position locale du but vue par l'agent.
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
+        local_target_input = delta_pos.repeat(1, 40) #faire 40 copies
+        local_target_input = local_target_input.reshape(2, 2, 20) # (B, 2, 2, 20)
 
-
-    
-        # Séparer les angles et les distances Lidar (VMAS donne souvent les distances directement)
-        # Pour respecter les 720 données (360 angles, 360 distances), nous devons créer l'information d'angle.
-        # Dans VMAS, les 360 valeurs sont D, D, D... Nous allons devoir simplifier l'entrée à 360 distances pour ce test.
-        # Pour respecter les 800 inputs de l'étude, nous allons concaténer 40 copies de (dX, dY).
-
-        # 2. Créer l'entrée cible (40 copies de (dX, dY) = 80 données)
-        local_target_input = delta_pos.repeat(1, 40) # (B, 80)
-    
-        # 3. 
-        # Si lidar.measure() renvoie les distances pour les 360 rayons:
-        lidar_input = torch.cat([lidar_distances, lidar_angles], dim=-2) # (B, 720)
-
-        # 4. Concaténer pour obtenir 800 éléments
-        raw_input_800 = torch.cat([lidar_input, local_target_input], dim=-1) # (B, 800)
+        # Concaténer pour obtenir 800 éléments
+        raw_input_800 = torch.cat((lidar_mesures, local_target_input), dim=1) # (B, 2, 20, 20)
     
         # 5. Redimensionner pour le CNN: (B, 800) -> (B, 2, 20, 20)
         # L'étude utilise (20x20x2) car (20*20*2 = 800)
-        return raw_input_800.reshape(self.world.batch_dim, 2, 20, 20)
+        return raw_input_800
 
     def set_max_dist(self, max_dist: float):
         """Sets the maximum spawning distance for curriculum learning."""

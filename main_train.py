@@ -15,6 +15,7 @@ current_step = 0
 epsilon = EPSILON_START
 
 # Initialisation de l'environnement VMAS (PathPlanningScenario)
+
 env = make_env(scenario=PathPlanningScenario(), num_envs=1, device=DEVICE, seed=0) # Voir différents types de wrapper
 # Initialisation des réseaux (CNN)
 q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
@@ -37,7 +38,7 @@ for episode in range(NUM_EPISODES):
 
     # B. Réinitialisation de l'environnement (Map 0 ou 1)
     state_tensor_800 = env.reset()
-    state_np = state_tensor_800[0].cpu().numpy().squeeze(0) # Forme: (2, 20, 20)
+    state_np = state_tensor_800[0]# Forme: (B, 2, 20, 20)
     
     total_reward = 0
     
@@ -46,19 +47,21 @@ for episode in range(NUM_EPISODES):
         
         # C. Sélection de l'action (Epsilon-greedy)
         if random.random() < epsilon:
-            action = env.action_space.sample()  
+            action = env.action_space.sample()
         else:
             with torch.no_grad():
                 # state_np est déjà (2, 20, 20), on ajoute la dimension de batch (1)
-                state_tensor = torch.tensor(state_np, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+                state_tensor = state_np
                 q_values = q_network(state_tensor)
                 action = torch.argmax(q_values).item()
         
         # D. Exécuter l'action et stocker
-        next_state_tensor_800, reward, terminated, truncated, info = env.step(action)
+        #TODO executer cette commande sur le batch des actions
+        #TODO action est donné directement sous forme de tensor alors qu'on attend ici une liste/un array de tensor
+        next_state_tensor_800, reward, terminated, truncated = env.step([action])
         done = terminated or truncated
-        total_reward += reward
-        next_state_np = next_state_tensor_800.cpu().numpy().squeeze(0)
+        total_reward += reward[0].item()
+        next_state_np = next_state_tensor_800[0]#.cpu().numpy().squeeze(0)
         
         replay_buffer.add(state_np, action, reward, next_state_np, done)
         
@@ -68,10 +71,12 @@ for episode in range(NUM_EPISODES):
 
             # Conversion du lot en Tenseurs (Shape: BATCH_SIZE, 2, 20, 20)
             states_tensor = torch.tensor(np.array(states), dtype=torch.float32).to(DEVICE)
-            actions_tensor = torch.tensor(actions, dtype=torch.long).to(DEVICE)
+            actions_tensor = torch.tensor(actions, dtype=torch.float32).to(DEVICE)
             rewards_tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)
             next_states_tensor = torch.tensor(np.array(next_states), dtype=torch.float32).to(DEVICE)
-            dones_tensor = torch.tensor(dones, dtype=torch.float32).to(DEVICE)
+            #TODO Vérifier les valeurs de dones
+            dones = tuple([ 1*(d!=[{}]) for d in dones])
+            dones_tensor = torch.tensor(dones, dtype=torch.int).to(DEVICE)
 
             # --- CALCUL DDQN ---
             with torch.no_grad():
