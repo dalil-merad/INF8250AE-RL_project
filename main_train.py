@@ -15,13 +15,7 @@ current_step = 0
 epsilon = EPSILON_START
 
 # Initialisation de l'environnement VMAS (PathPlanningScenario)
-env = PathPlanningScenario()
-env.make_world(
-    batch_dim=1, 
-    device=DEVICE, 
-    training=True,      # Mode entraînement (Map 0/1)
-    max_dist=L_MIN      # Initialisation de la distance L (Curriculum)
-)
+env = make_env(scenario=PathPlanningScenario(), num_envs=1, device=DEVICE, seed=0) # Voir différents types de wrapper
 # Initialisation des réseaux (CNN)
 q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
 target_q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
@@ -39,11 +33,11 @@ rewards_per_episode = []
 for episode in range(NUM_EPISODES):
     # A. Curriculum Learning: Mettre à jour L et l'appliquer à l'environnement
     max_dist_L = update_L(current_step)
-    env.set_max_dist(max_dist_L)
+    env.scenario.set_max_dist(max_dist_L)
 
     # B. Réinitialisation de l'environnement (Map 0 ou 1)
-    state_tensor_800, info = env.reset()
-    state_np = state_tensor_800.cpu().numpy().squeeze(0) # Forme: (2, 20, 20)
+    state_tensor_800 = env.reset()
+    state_np = state_tensor_800[0].cpu().numpy().squeeze(0) # Forme: (2, 20, 20)
     
     total_reward = 0
     

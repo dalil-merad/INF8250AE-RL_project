@@ -532,10 +532,12 @@ class PathPlanningScenario(BaseScenario):
 
         # Lidar.measure() renvoie un vecteur de 360 distances (une par rayon)
         lidar_distances = agent.sensors[0].measure() # (B, 360)
-
+        lidar_angles = torch.tile(torch.arange(0, 2 * np.pi, 2 * np.pi / 360, device=self.world.device), (self.world.batch_dim, 1)) # (B, 360)
         # 1. Calculer les coordonnées relatives au but (Delta X, Delta Y)
         # C'est la position locale du but vue par l'agent.
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
+
+
     
         # Séparer les angles et les distances Lidar (VMAS donne souvent les distances directement)
         # Pour respecter les 720 données (360 angles, 360 distances), nous devons créer l'information d'angle.
@@ -545,10 +547,9 @@ class PathPlanningScenario(BaseScenario):
         # 2. Créer l'entrée cible (40 copies de (dX, dY) = 80 données)
         local_target_input = delta_pos.repeat(1, 40) # (B, 80)
     
-        # 3. Mettre l'observation Lidar au format (360 * 2 = 720) en dupliquant les distances
-        # pour simuler l'entrée angle/distance si l'information d'angle n'est pas disponible.
+        # 3. 
         # Si lidar.measure() renvoie les distances pour les 360 rayons:
-        lidar_input = torch.cat([lidar_distances, lidar_distances], dim=-1) # (B, 720)
+        lidar_input = torch.cat([lidar_distances, lidar_angles], dim=-2) # (B, 720)
 
         # 4. Concaténer pour obtenir 800 éléments
         raw_input_800 = torch.cat([lidar_input, local_target_input], dim=-1) # (B, 800)
