@@ -207,6 +207,21 @@ for episode in range(NUM_EPISODES):
     rewards_per_episode.append(total_reward)
     
     # [Ajouter ici la logique d'affichage des récompenses]
+
+def save_agent(q_network, filename="ddqn_q_network.pt"):
+    """
+    Sauvegarde les poids (state_dict) du Q-Network dans un fichier .pt.
+    
+    Args:
+        q_network (torch.nn.Module): Le réseau à sauvegarder (le réseau d'apprentissage).
+        filename (str): Le nom du fichier de sortie.
+    """
+    try:
+        # On sauvegarde uniquement l'état du modèle (les poids)
+        torch.save(q_network.state_dict(), filename)
+        print(f"\n✅ Modèle Q-Network sauvegardé avec succès dans: {filename}")
+    except Exception as e:
+        print(f"\n❌ Erreur lors de la sauvegarde du modèle: {e}")
     
 # --- 4. Évaluation Finale ---
 # Global Target Pos est la destination finale du parcours test (e.g., [4.0, 1.0])
