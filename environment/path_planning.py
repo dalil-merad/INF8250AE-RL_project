@@ -525,31 +525,36 @@ class PathPlanningScenario(BaseScenario):
         return rews
 
     def observation(self, agent: Agent):
-
+        batch_dim = self.world.batch_dim
+        device = self.world.device
         # Veuillez noter que vous devriez implémenter un mécanisme pour obtenir les angles pour être 100% conforme 
         # à l'étude (qui utilise Lidar signal et Local Target Position), mais la conversion ci-dessus est la 
         # manière la plus courante d'adapter un vecteur plat de 800 éléments à l'entrée CNN du rapport.
 
-        # Lidar.measure() renvoie un vecteur de 360 distances (une par rayon)
+        # --- 1. Lidar Mesures (720 éléments) ---
         lidar_distances = agent.sensors[0].measure() # (B, 360)
 
-        # Pour respecter les 720 données (360 angles, 360 distances), nous devons créer l'information d'angle.
-        lidar_angles = torch.tile(torch.linspace(start=0, end=360, steps=360), (1, 1)) # (B, 360)
-        lidar_mesures = torch.stack((lidar_distances, lidar_angles), dim=2) # (B, 360, 2)
-        lidar_mesures = lidar_mesures.transpose(1, 2) # (B, 2, 360)
-        lidar_mesures = lidar_mesures.reshape(2, 18, 20) # (B, 2, 18, 20)
-
-        # Calculer les coordonnées relatives au but (Delta X, Delta Y)
-        # C'est la position locale du but vue par l'agent.
+        # Création des angles (0-360)
+        angle_vector = torch.linspace(start=0, end=360, steps=self.n_lidar_rays, device=device).unsqueeze(0)
+        lidar_angles = angle_vector.repeat(batch_dim, 1) # (B, 360)
+        # Empilement et Transposition: (B, 360, 2) -> (B, 2, 360)
+        lidar_mesures = torch.stack((lidar_distances, lidar_angles), dim=2).transpose(1, 2)
+        # Total éléments: B * 720. Nous utilisons B = batch_dim.
+        lidar_input_reshaped = lidar_mesures.reshape(batch_dim, 2, 18, 20)
+        
+        # --- 2. Cible Locale (80 éléments) ---
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
-        local_target_input = delta_pos.repeat(1, 40) #faire 40 copies
-        local_target_input = local_target_input.reshape(2, 2, 20) # (B, 2, 2, 20)
+        # 40 copies de (dX, dY) -> 80 éléments (B, 80)
+        local_target_vector = delta_pos.repeat(1, 40) 
+        # Total éléments: B * 80.
+        local_target_input_reshaped = local_target_vector.reshape(batch_dim, 2, 2, 20)
 
-        # Concaténer pour obtenir 800 éléments
-        raw_input_800 = torch.cat((lidar_mesures, local_target_input), dim=1) # (B, 2, 20, 20)
-    
-        # 5. Redimensionner pour le CNN: (B, 800) -> (B, 2, 20, 20)
-        # L'étude utilise (20x20x2) car (20*20*2 = 800)
+        # --- 3. Concaténation Finale (B, 2, 20, 20) ---
+        # Concaténation sur dim=2 (Hauteur: 18 + 2 = 20)
+        raw_input_800 = torch.cat(
+        (lidar_input_reshaped, local_target_input_reshaped), dim=2 )
+       
+
         return raw_input_800
 
     def set_max_dist(self, max_dist: float):

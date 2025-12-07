@@ -7,6 +7,7 @@ import torch.optim as optim
 import numpy as np
 import random
 from vmas import make_env
+import collections # Ajouté pour les types d'actions
 
 CNN_INPUT_CHANNELS = 2
 ACTION_SIZE = 8
@@ -27,18 +28,19 @@ target_q_network.eval() # Le réseau cible ne doit pas être en mode entraîneme
 optimizer = optim.Adam(q_network.parameters(), lr=LEARNING_RATE)
 criterion = nn.MSELoss()
 replay_buffer = ReplayBuffer(REPLAY_BUFFER_CAPACITY)
-rewards_per_episode = []
+rewards_per_episode = collections.deque(maxlen=100) # Utiliser deque pour la moyenne glissante
 
 
 # --- 3. Boucle d'Entraînement Complète (Logique DDQN) ---
 for episode in range(NUM_EPISODES):
     # A. Curriculum Learning: Mettre à jour L et l'appliquer à l'environnement
-    max_dist_L = update_L(current_step)
+    max_dist_L = update_L(episode)
     env.scenario.set_max_dist(max_dist_L)
 
     # B. Réinitialisation de l'environnement (Map 0 ou 1)
-    state_tensor_800 = env.reset()
-    state_np = state_tensor_800[0]# Forme: (B, 2, 20, 20)
+    #state_tensor est de forme (num_envs, num_agents, C, H, W) -> (1, 1, 2, 20, 20)
+    state_tensor = env.reset()
+    state_np = state_tensor[0]# Forme: (B, 2, 20, 20)
     
     total_reward = 0
     
@@ -50,20 +52,20 @@ for episode in range(NUM_EPISODES):
             action = env.action_space.sample()
         else:
             with torch.no_grad():
-                # state_np est déjà (2, 20, 20), on ajoute la dimension de batch (1)
+                # state_np est déjà (2, 20, 20), on ajoute la dimension d'environnements
                 state_tensor = state_np
                 q_values = q_network(state_tensor)
                 action = torch.argmax(q_values).item()
         
         # D. Exécuter l'action et stocker
-        #TODO executer cette commande sur le batch des actions
+        #TODO executer cette commande sur le nombre d'environnements 
         #TODO action est donné directement sous forme de tensor alors qu'on attend ici une liste/un array de tensor
         next_state_tensor_800, reward, terminated, truncated = env.step([action])
-        done = terminated or truncated
+        done = terminated or truncated 
         total_reward += reward[0].item()
         next_state_np = next_state_tensor_800[0]#.cpu().numpy().squeeze(0)
         
-        replay_buffer.add(state_np, action, reward, next_state_np, done)
+        replay_buffer.add(state_np, action, reward, next_state_np, done) # S'assurer que de la ligne 39 à la ligne 64, les vecteurs sont de forme (B, 2, 20, 20) ou B est le nb environnement
         
         # E. Entraînement par lot (DDQN)
         if len(replay_buffer) > BATCH_SIZE and current_step % TRAINING_FREQUENCY == 0:
@@ -113,3 +115,7 @@ for episode in range(NUM_EPISODES):
 # GLOBAL_TARGET_POS = np.array([4.0, 1.0]) 
 # eval_rewards, avg_reward = evaluate_agent(q_network, env, GLOBAL_TARGET_POS, num_eval_episodes=5)
 # print(f"Average reward during evaluation: {avg_reward:.2f}")
+
+
+# Faire une commande qui sauvegarde le q_network .pt
+# remplacer le replay_buffer par celui intégrer celui 
