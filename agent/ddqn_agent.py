@@ -4,17 +4,16 @@ import torch.nn as nn
 import torch.optim as optim
 import random
 import numpy as np
-from .params import *
-
+from .params import Params
 
 
 class QNetwork(nn.Module):
     def __init__(self, state_size, action_size):
         super(QNetwork, self).__init__()
-        self.conv1 =nn.Conv2d(state_size, 16, kernel_size=2, stride=2)
-        #self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 =nn.Conv2d(16, 32, kernel_size=2, stride=2)
-        self.conv3 =nn.Conv2d(32, 128, kernel_size=5, stride=1)
+        self.conv1 = nn.Conv2d(state_size, 16, kernel_size=2, stride=2)
+        # self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=2, stride=2)
+        self.conv3 = nn.Conv2d(32, 128, kernel_size=5, stride=1)
         self.fc1 = nn.Linear(128, 256)
         self.fc2 = nn.Linear(256, action_size)
 
@@ -85,15 +84,16 @@ def evaluate_agent(q_network: nn.Module, env, global_target_pos: np.ndarray, num
         env.training = False 
         
         # Le reset place l'agent et la CIBLE LOCALE INITIALE (self.goal) dans la zone de test (Map 2)
-        state_tensor_800, info = env.reset() # state_tensor_800 est de forme (B, 2, 20, 20)
-        state_np = state_tensor_800.cpu().numpy().squeeze(0) # Convertir en numpy pour la gestion
+        state_tensor_800, info = env.reset()  # state_tensor_800 est de forme (B, 2, 20, 20)
+        state_np = state_tensor_800.cpu().numpy().squeeze(0)  # Convertir en numpy pour la gestion
 
         total_reward = 0.0
         
         # Le but atteint (reward > 0.5) est notre signal pour changer la cible locale.
         # L'objectif est de remplacer self.goal par une NOUVELLE cible locale menant à FINAL_GOAL_TENSOR.
 
-        for step in range(MAX_TEST_STEPS):
+        for step in range(Params.MAX_TEST_STEPS):
+            prev_reward = -1
             
             # --- 2. Mise à jour Dynamique de la Cible Locale (Simuler le Planificateur de Haut Niveau) ---
             
@@ -101,28 +101,28 @@ def evaluate_agent(q_network: nn.Module, env, global_target_pos: np.ndarray, num
             current_pos = env.agent.state.pos.squeeze(0)
             dist_to_final_goal = torch.linalg.norm(current_pos - FINAL_GOAL_TENSOR)
 
-            if dist_to_final_goal < 0.2: # Cible globale finale atteinte
-                total_reward += 10.0 # Récompense bonus pour la fin du parcours
+            if dist_to_final_goal < 0.2:  # Cible globale finale atteinte
+                total_reward += 10.0  # Récompense bonus pour la fin du parcours
                 break 
 
             # Simuler l'atteinte d'une cible locale (la récompense de +1)
             # Votre environnement renvoie un reward de +1 quand la cible locale est atteinte.
             # Si le reward du pas précédent était +1, cela signifie que nous devons définir une NOUVELLE cible locale.
             if step > 0 and prev_reward > 0.5:
-                 # Le planificateur de haut niveau place une nouvelle cible LOCALE
-                 # (self.goal) à l'intersection du rayon Lidar (2m) et du chemin vers la cible finale.
-                 
-                 # 1. Calculer le vecteur vers la cible finale
-                 target_vec = FINAL_GOAL_TENSOR - current_pos
-                 
-                 # 2. Normaliser ce vecteur
-                 target_norm = target_vec / torch.linalg.norm(target_vec)
-                 
-                 # 3. La nouvelle cible locale est à la limite du rayon Lidar (2.0m) dans cette direction
-                 new_local_goal_pos = current_pos + target_norm * env.lidar_range
-                 
-                 # 4. Déplacer l'entité self.goal à cette nouvelle position locale
-                 env.goal.set_pos(new_local_goal_pos)
+                # Le planificateur de haut niveau place une nouvelle cible LOCALE
+                # (self.goal) à l'intersection du rayon Lidar (2m) et du chemin vers la cible finale.
+
+                # 1. Calculer le vecteur vers la cible finale
+                target_vec = FINAL_GOAL_TENSOR - current_pos
+
+                # 2. Normaliser ce vecteur
+                target_norm = target_vec / torch.linalg.norm(target_vec)
+
+                # 3. La nouvelle cible locale est à la limite du rayon Lidar (2.0m) dans cette direction
+                new_local_goal_pos = current_pos + target_norm * env.lidar_range
+
+                # 4. Déplacer l'entité self.goal à cette nouvelle position locale
+                env.goal.set_pos(new_local_goal_pos)
             
             # --- 3. Sélection de l'Action (Exploitation Pure) ---
             
@@ -140,25 +140,24 @@ def evaluate_agent(q_network: nn.Module, env, global_target_pos: np.ndarray, num
             prev_reward = reward
             
             # 5. Condition de collision (terminer l'épisode si le robot heurte un obstacle)
-            if reward < -0.5: # Collision: -1 - 0.01 = -1.01
+            if reward < -0.5:  # Collision: -1 - 0.01 = -1.01
                 break
                 
         rewards_per_eval_episode.append(total_reward)
 
-    env.training = True # Revenir au mode entraînement
+    env.training = True  # Revenir au mode entraînement
     average_reward = np.mean(rewards_per_eval_episode)
     return rewards_per_eval_episode, average_reward
-
 
 def update_L(n_steps):
     """
     Met à jour la distance L entre le point de départ et la cible selon l'Équation (10) [cite: 135-139].
     """
-    if n_steps <= N1_THRESHOLD:
-        L = L_MIN
-    elif N1_THRESHOLD < n_steps < N2_THRESHOLD:
-        L = L_MIN + M_SEARCH_SPEED * (n_steps - N1_THRESHOLD)
+    if n_steps <= Params.N1_THRESHOLD:
+        L = Params.L_MIN
+    elif Params.N1_THRESHOLD < n_steps < Params.N2_THRESHOLD:
+        L = Params.L_MIN + Params.M_SEARCH_SPEED * (n_steps - Params.N1_THRESHOLD)
     else:
-        L = L_MAX
+        L = Params.L_MAX
     
     return L

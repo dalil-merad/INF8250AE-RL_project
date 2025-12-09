@@ -1,11 +1,11 @@
 from environment.path_planning import PathPlanningScenario  # Assurez-vous d'importer la bonne classe
-from agent.ddqn_agent import QNetwork, update_L, evaluate_agent
-from agent.params import *  # Importer tous les hyperparamètres
+from agent.ddqn_agent import QNetwork, update_L  # evaluate_agent
+from agent.params import Params  # Importer tous les hyperparamètres
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import random
+# import numpy as np
+# import random
 from vmas import make_env
 import collections  # Ajouté pour les types d'actions
 from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage
@@ -17,7 +17,7 @@ CNN_INPUT_CHANNELS = 2
 ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
-epsilon = EPSILON_START
+epsilon = Params.EPSILON_START
 NUM_ENVS = 1024
 
 # Optionnel: rendu pendant l'entraînement
@@ -34,7 +34,7 @@ def training_loop():
         scenario=PathPlanningScenario(), 
         num_envs=NUM_ENVS, 
         continuous_actions=False,
-        max_steps=MAX_STEPS_PER_EPISODE, 
+        max_steps=Params.MAX_STEPS_PER_EPISODE,
         device=DEVICE, 
         seed=0,
         dict_spaces=True,
@@ -48,12 +48,12 @@ def training_loop():
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
 
     # Autres initialisations
-    optimizer = optim.Adam(q_network.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(q_network.parameters(), lr=Params.LEARNING_RATE)
     criterion = nn.MSELoss()
 
     # Utiliser le replay buffer de torchrl
     replay_buffer = TensorDictReplayBuffer(
-        storage=LazyTensorStorage(REPLAY_BUFFER_CAPACITY, device=DEVICE)
+        storage=LazyTensorStorage(Params.REPLAY_BUFFER_CAPACITY, device=DEVICE)
     )
 
     rewards_per_episode = collections.deque(maxlen=100)  # Utiliser deque pour la moyenne glissante
@@ -78,8 +78,8 @@ def training_loop():
     log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon"])
     current_loss = 0.0
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
-    pbar = tqdm(total=NUM_EPISODES)
-    while total_episodes < NUM_EPISODES:
+    pbar = tqdm(total=Params.NUM_EPISODES)
+    while total_episodes < Params.NUM_EPISODES:
 
         # C. Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
         with torch.no_grad():
@@ -189,11 +189,11 @@ def training_loop():
         # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
         # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
         if (
-            len(replay_buffer) >= BATCH_SIZE
-            and samples_since_last_train >= NUM_ENVS * TRAINING_FREQUENCY_STEPS
+            len(replay_buffer) >= Params.BATCH_SIZE
+            and samples_since_last_train >= NUM_ENVS * Params.TRAINING_FREQUENCY_STEPS
             # and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
         ):
-            batch = replay_buffer.sample(BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
+            batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
 
             states_tensor = batch["state"].to(DEVICE)        # (B, 2, 20, 20)
             actions_tensor = batch["action"].to(DEVICE).long()      # (B,)
@@ -205,7 +205,7 @@ def training_loop():
             with torch.no_grad():
                 next_actions = torch.argmax(q_network(next_states_batch), dim=1, keepdim=True)   # (B,1)
                 next_q_target = target_q_network(next_states_batch).gather(1, next_actions).squeeze(1)  # (B,)
-                target_q_values = rewards_batch + GAMMA * next_q_target * (1.0 - dones_batch)
+                target_q_values = rewards_batch + Params.GAMMA * next_q_target * (1.0 - dones_batch)
 
             predicted_q_values = q_network(states_tensor).gather(
                 1, actions_tensor.unsqueeze(1)
@@ -219,14 +219,14 @@ def training_loop():
             current_loss = loss.item()
 
             # Mise à jour Epsilon (par batch d'entraînement)
-            epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
+            epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
 
             # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
             samples_since_last_train = 0
             numer_of_q_updates_since_target_update += 1
 
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
-        if numer_of_q_updates_since_target_update % TARGET_UPDATE_FREQUENCY == 0:
+        if numer_of_q_updates_since_target_update % Params.TARGET_UPDATE_FREQUENCY == 0:
             target_q_network.load_state_dict(q_network.state_dict())
             numer_of_q_updates_since_target_update = 0
 
@@ -259,6 +259,7 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
 # GLOBAL_TARGET_POS = np.array([4.0, 1.0]) 
 # eval_rewards, avg_reward = evaluate_agent(q_network, env, GLOBAL_TARGET_POS, num_eval_episodes=5)
 # print(f"Average reward during evaluation: {avg_reward:.2f}")
+
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
