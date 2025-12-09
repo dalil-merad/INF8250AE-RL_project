@@ -148,6 +148,8 @@ def evaluate_agent(q_network: nn.Module, env, global_target_pos: np.ndarray, num
     env.training = True # Revenir au mode entraînement
     average_reward = np.mean(rewards_per_eval_episode)
     return rewards_per_eval_episode, average_reward
+
+
 def update_L(n_steps):
     """
     Met à jour la distance L entre le point de départ et la cible selon l'Équation (10) [cite: 135-139].

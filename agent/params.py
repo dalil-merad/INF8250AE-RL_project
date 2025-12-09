@@ -15,7 +15,7 @@ REPLAY_BUFFER_CAPACITY = 40000
 BATCH_SIZE = 128
 TRAINING_START_STEPS = 5000  # Remplissage du buffer avant l'entraînement [cite: 264]
 TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
-TARGET_UPDATE_FREQUENCY = 100 # Mise à jour du réseau cible tous les C pas
+TARGET_UPDATE_FREQUENCY = 100  # Mise à jour du réseau cible tous les C pas
 
 # Paramètres de l'environnement
 CNN_INPUT_CHANNELS = 2 # 2 canaux (Angle, Distance) pour l'entrée 20x20x2

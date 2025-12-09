@@ -1,27 +1,31 @@
-from environment.path_planning import PathPlanningScenario # Assurez-vous d'importer la bonne classe
+from environment.path_planning import PathPlanningScenario  # Assurez-vous d'importer la bonne classe
 from agent.ddqn_agent import QNetwork, update_L, evaluate_agent
-from agent.params import * # Importer tous les hyperparamètres
+from agent.params import *  # Importer tous les hyperparamètres
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
 from vmas import make_env
-import collections # Ajouté pour les types d'actions
+import collections  # Ajouté pour les types d'actions
 from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage
 from tensordict import TensorDict
+from tqdm import tqdm
+import csv
 
 CNN_INPUT_CHANNELS = 2
 ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = EPSILON_START
-NUM_ENVS = 256
+NUM_ENVS = 1024
 
 # Optionnel: rendu pendant l'entraînement
-RENDER_DURING_TRAINING = True      # passez à True pour activer
+RENDER_DURING_TRAINING = False      # passez à True pour activer
 RENDER_EVERY_N_STEPS = 10           # tous les N steps globaux, on déclenche une fenêtre de rendu
 RENDER_NUM_STEPS = 5                # nombre de steps consécutifs à rendre après déclenchement
+
+LOG_EVERY_N_EPISODES = 20  # Fréquence de logging des statistiques
 
 def training_loop():
     global current_step, epsilon
@@ -40,8 +44,8 @@ def training_loop():
     # Initialisation des réseaux (CNN)
     q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
     target_q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
-    target_q_network.load_state_dict(q_network.state_dict()) # Initialisation du réseau cible
-    target_q_network.eval() # Le réseau cible ne doit pas être en mode entraînement
+    target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
+    target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
 
     # Autres initialisations
     optimizer = optim.Adam(q_network.parameters(), lr=LEARNING_RATE)
@@ -52,7 +56,7 @@ def training_loop():
         storage=LazyTensorStorage(REPLAY_BUFFER_CAPACITY, device=DEVICE)
     )
 
-    rewards_per_episode = collections.deque(maxlen=100) # Utiliser deque pour la moyenne glissante
+    rewards_per_episode = collections.deque(maxlen=100)  # Utiliser deque pour la moyenne glissante
 
     # Compteurs globaux
     total_episodes = 0
@@ -68,7 +72,12 @@ def training_loop():
     state_tensor = state_dict["robot"]  # (NUM_ENVS, 2, 20, 20)
     total_reward = torch.zeros(NUM_ENVS, dtype=torch.float32, device=DEVICE)
 
+    log_f = open("training_log.csv", mode="w", newline="")
+    log_writer = csv.writer(log_f)
+    log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon"])
+    current_loss = 0.0
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
+    pbar = tqdm(total=NUM_EPISODES)
     while total_episodes < NUM_EPISODES:
         current_step += 1
 
@@ -133,6 +142,17 @@ def training_loop():
                 total_reward[idx] = 0.0  # reset cumul pour ce env
 
             total_episodes += episodes_this_step
+            pbar.update(episodes_this_step)
+
+            # Logging
+            if total_episodes % LOG_EVERY_N_EPISODES == 0:
+                avg_r = sum(rewards_per_episode) / len(rewards_per_episode) if rewards_per_episode else 0
+                print('\r\033[2K\033[1G', end="", flush=True)
+                print(
+                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} | Eps: {epsilon:.2f}")
+
+                log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon])
+                log_f.flush()
 
             # --- Reset des environnements terminés ---
             # On réinitialise chaque env terminé, sans récupérer les obs ici
@@ -153,6 +173,8 @@ def training_loop():
                 dict_agent_names=True,
             )
             # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
+            if isinstance(obs_dict, list):
+                obs_dict = obs_dict[0]
             latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
 
             # Tous les envs ont maintenant dans world l'état correct:
@@ -193,6 +215,8 @@ def training_loop():
             loss.backward()
             optimizer.step()
 
+            current_loss = loss.item()
+
             # Mise à jour Epsilon (par batch d'entraînement)
             epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
 
@@ -207,8 +231,8 @@ def training_loop():
         # Curriculum Learning basé sur le nombre total d'épisodes terminés
         max_dist_L = update_L(total_episodes)
         env.scenario.set_max_dist(max_dist_L)
-
-    #TODO: DEFNIR UNE CONDITION D'ARRET APPROPRIÉE
+    pbar.close()
+    log_f.close()
     return q_network
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
