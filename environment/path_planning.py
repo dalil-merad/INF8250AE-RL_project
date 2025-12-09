@@ -1,7 +1,7 @@
 import torch
 import typing
 from typing import Dict, List
-from environment.map_layouts import MAP_LAYOUTS
+from .map_layouts import MAP_LAYOUTS
 
 from vmas.simulator.core import Agent, Landmark, World, Sphere, Box, Entity
 from vmas.simulator.scenario import BaseScenario
