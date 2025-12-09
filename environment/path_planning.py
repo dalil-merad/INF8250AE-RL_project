@@ -7,6 +7,7 @@ from vmas.simulator.core import Agent, Landmark, World, Sphere, Box, Entity
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color, ScenarioUtils
+from vmas.simulator.dynamics.forward import Forward
 
 import numpy as np
 
@@ -30,7 +31,7 @@ class PathPlanningScenario(BaseScenario):
         # L - Max initial distance between agent and goal (Curriculum setting)
         self.set_max_dist(kwargs.pop("max_dist", 2.0) )
         # Safety margin for spawning near walls/obstacles (Agent radius is 0.1m)
-        self.safety_margin = kwargs.pop("safety_margin", 0.25) 
+        self.safety_margin = kwargs.pop("safety_margin", 0.125) 
 
         # Set nominal dt for obstacle force scaling
         self.nominal_dt = kwargs.pop("nominal_dt", 0.1) 
@@ -68,8 +69,11 @@ class PathPlanningScenario(BaseScenario):
                 n_rays=self.n_lidar_rays,
                 max_range=self.lidar_range,
                 entity_filter=lambda e: e.collide, # Fix: Only cast rays against collidable entities
-                render=False
-            )]
+                render=False,
+            )],
+            action_size=1, # 1 action dimension for discrete action indexing
+            discrete_action_nvec=[8], # 8 discrete actions (N, S, W, E, NW, NE, SW, SE
+            dynamics=Forward()
         )
         world.add_agent(self.agent)
 
@@ -93,7 +97,7 @@ class PathPlanningScenario(BaseScenario):
                             collide=True,
                             mass=1000, # Heavy so the robot doesn't push them easily
                             u_range=1e6, # Fix: Increase u_range to allow high forces for heavy scripted agents
-                            action_script=self.patrol_script # THIS IS KEY: They follow a script
+                            action_script=self.patrol_script, # THIS IS KEY: They follow a script
             )
             # Store patrol metadata (start, end, speed) in the object for easy access
             obstacle.patrol_start = torch.zeros((batch_dim, 2), device=device)
@@ -126,10 +130,11 @@ class PathPlanningScenario(BaseScenario):
         for i in range(2):
             border = Landmark(
                 name=f"border_h_{i}",
-                shape=Box(length=self.map_cols * self.grid_size, width=border_thickness),
+                shape=Box(length=(self.map_cols * self.grid_size) + 0.2 , width=border_thickness),
                 color=Color.BLACK,
-                collide=False
+                collide=True,  # was False: make borders collidable so lidar can see them and they block the robot
             )
+            # Note: we do NOT add these borders to self.obstacle_entities; they are separate "outer" boundaries
             world.add_landmark(border)
             self.border_segments.append(border)
         
@@ -137,9 +142,9 @@ class PathPlanningScenario(BaseScenario):
         for i in range(2):
             border = Landmark(
                 name=f"border_v_{i}",
-                shape=Box(length=self.map_rows * self.grid_size, width=border_thickness),
+                shape=Box(length=(self.map_rows * self.grid_size) + 0.2, width=border_thickness),
                 color=Color.BLACK,
-                collide=False
+                collide=True,  # was False
             )
             world.add_landmark(border)
             self.border_segments.append(border)
@@ -225,11 +230,15 @@ class PathPlanningScenario(BaseScenario):
         
         pos_tensor = torch.tensor(pos, dtype=torch.float32)
 
+        # Agent radius ~0.1m, ensure clearance >= radius + safety_margin
+        agent_radius = 0.1
+        effective_margin = agent_radius + self.safety_margin
+
         # Check against static walls
         for w_pos in walls_data:
             w_pos_tensor = torch.tensor(w_pos, dtype=torch.float32)
             dist = torch.linalg.norm(pos_tensor - w_pos_tensor)
-            if dist < self.safety_margin:
+            if dist < effective_margin:
                 return False
         
         # Check against moving obstacle start positions AND their patrol paths
@@ -238,7 +247,7 @@ class PathPlanningScenario(BaseScenario):
             
             # Check start position
             dist = torch.linalg.norm(pos_tensor - m_pos_tensor)
-            if dist < self.safety_margin:
+            if dist < effective_margin:
                 return False
             
             # Check end position (calculate it the same way as in reset_world_at)
@@ -252,15 +261,14 @@ class PathPlanningScenario(BaseScenario):
                 p_end[0] += 5 * grid_size
             
             dist_end = torch.linalg.norm(pos_tensor - p_end)
-            if dist_end < self.safety_margin:
+            if dist_end < effective_margin:
                 return False
             
             # Check along the patrol line (sample points between start and end)
-            # Use 5 samples along the path
             for alpha in [0.25, 0.5, 0.75]:
                 interpolated_pos = m_pos_tensor + alpha * (p_end - m_pos_tensor)
                 dist_path = torch.linalg.norm(pos_tensor - interpolated_pos)
-                if dist_path < self.safety_margin:
+                if dist_path < effective_margin:
                     return False
                 
         # Also check against the outer map boundary
@@ -275,7 +283,7 @@ class PathPlanningScenario(BaseScenario):
         # If env_index is None when initializing at the start of training or evaluation(reset all), we pick randoms for everyone
         if env_index is None:
             # Resetting ALL envs.
-            indices = torch.arange(self.world.batch_dim, device=self.world.device)
+            indice = None #If set to None, VMAS applies to all envs
             # Reset time for all
             self.global_time.fill_(0.0)
 
@@ -287,7 +295,7 @@ class PathPlanningScenario(BaseScenario):
                 map_choices = torch.full((self.world.batch_dim,), 2, device=self.world.device)
         else:
             # Resetting SINGLE env
-            indices = torch.tensor([env_index], device=self.world.device)
+            indice = env_index
             # Reset time for this env
             self.global_time[env_index] = 0.0
 
@@ -296,52 +304,57 @@ class PathPlanningScenario(BaseScenario):
             else:
                 map_choices = torch.tensor([2], device=self.world.device)
 
-
         # 2. Configure Maps (Iterate via CPU to handle mixed maps)
         # First, reset all entities to "Out of Bounds" for these indices
-        # Fix: Use a position just outside the map bounds instead of [1000, 1000] to avoid camera zoom issues
         out_of_bounds = torch.tensor([self.world_x_bound + 1.0, self.world_y_bound + 1.0], device=self.world.device)
         for entity in self.obstacle_entities:
-            entity.set_pos(out_of_bounds, batch_index=indices)
-            # Also reset velocity and rotation for moving obstacles to prevent drift
-            if hasattr(entity, 'state') and hasattr(entity.state, 'vel'):
-                entity.state.vel[indices] = 0.0
-            if hasattr(entity, 'state') and hasattr(entity.state, 'rot'):
-                entity.state.rot[indices] = 0.0
+            entity.set_pos(out_of_bounds, batch_index=indice)
+            if hasattr(entity, 'state') and entity.state.vel is not None:
+                zero_vel = torch.zeros_like(entity.state.vel[0])
+                entity.set_vel(zero_vel, batch_index=indice)
+            if hasattr(entity, 'state') and entity.state.rot is not None:
+                zero_rot = torch.zeros_like(entity.state.rot[0])
+                entity.set_rot(zero_rot, batch_index=indice)
 
         # Apply specific map configurations per environment
         cpu_map_choices = map_choices.tolist()
-        cpu_indices = indices.tolist()
-        grid_size = 0.2
+        if env_index is None:
+            cpu_indices = list(range(self.world.batch_dim))
+        else:
+            # Only configure the requested env index
+            cpu_indices = [env_index]
 
         for i, map_id in zip(cpu_indices, cpu_map_choices):
             walls_data, moving_data = self.parsed_maps[map_id]
             
-            # Set Visual Border (4 sides of the map)
+            # Half robot length (robot Box length is 0.2 -> half is 0.1)
+            half_robot_len = 0.1
+
+            # Set Visual Border (4 sides of the map), moved outward by half a robot length
             # Top border
             self.border_segments[0].set_pos(
-                torch.tensor([0.0, self.world_y_bound], device=self.world.device), 
+                torch.tensor([0.0, self.world_y_bound + half_robot_len], device=self.world.device), 
                 batch_index=i
             )
             self.border_segments[0].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
             
             # Bottom border
             self.border_segments[1].set_pos(
-                torch.tensor([0.0, -self.world_y_bound], device=self.world.device), 
+                torch.tensor([0.0, -self.world_y_bound - half_robot_len], device=self.world.device), 
                 batch_index=i
             )
             self.border_segments[1].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
             
             # Left border
             self.border_segments[2].set_pos(
-                torch.tensor([-self.world_x_bound, 0.0], device=self.world.device), 
+                torch.tensor([-self.world_x_bound - half_robot_len, 0.0], device=self.world.device), 
                 batch_index=i
             )
             self.border_segments[2].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
             
             # Right border
             self.border_segments[3].set_pos(
-                torch.tensor([self.world_x_bound, 0.0], device=self.world.device), 
+                torch.tensor([self.world_x_bound + half_robot_len, 0.0], device=self.world.device), 
                 batch_index=i
             )
             self.border_segments[3].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
@@ -355,7 +368,6 @@ class PathPlanningScenario(BaseScenario):
             for m_idx, m_data in enumerate(moving_data):
                 if m_idx < len(self.moving_obstacles):
                     obs = self.moving_obstacles[m_idx]
-                    # Fix: Access 'pos' from the dictionary
                     start_pos = torch.tensor(m_data['pos'], device=self.world.device)
                     obs.set_pos(start_pos, batch_index=i)
                     
@@ -366,10 +378,10 @@ class PathPlanningScenario(BaseScenario):
                     otype = m_data['type']
                     if otype == 'U':
                         # Up/Down. Starts at map pos, goes down 4 cells.
-                        p_end[1] += 5 * grid_size
+                        p_end[1] += 5 * self.grid_size
                     elif otype == 'S':
                         # Sideways. Starts at map pos, goes right 4 cells.
-                        p_end[0] += 5 * grid_size
+                        p_end[0] += 5 * self.grid_size
 
                     obs.patrol_start[i] = p_start
                     obs.patrol_end[i] = p_end
@@ -397,8 +409,8 @@ class PathPlanningScenario(BaseScenario):
                 # 3b. Randomly sample Agent Position (within max_dist of goal)
                 # 1. Sample direction (angle)
                 angle = np.random.uniform(0, 2 * np.pi)
-                # 2. Sample distance (0.5m min to prevent trivial rewards, up to L)
-                distance = np.random.uniform(0.5, self._max_dist)
+                # 2. Sample distance (0.11m min to prevent trivial rewards and allow at least one movement to reach goal, up to L)
+                distance = np.random.uniform(0.13, self._max_dist)
                 
                 # Calculate agent position relative to goal
                 agent_pos_candidate = goal_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
@@ -421,7 +433,7 @@ class PathPlanningScenario(BaseScenario):
                 # but we must re-check collision and the distance constraint.
                 if not self._is_collision_free(agent_pos_np, map_id) or \
                    final_dist > self._max_dist or \
-                   final_dist < 0.2:
+                   final_dist < 0.13:
                     attempts += 1
                     continue
 
@@ -455,12 +467,13 @@ class PathPlanningScenario(BaseScenario):
             # Speed = (0.1m) / dt. Current dt=0.1, so speed=1.0.
             speed = 0.1 / self.world.dt
             diag_speed = speed * 0.707
-            
-            if agent.action.u.shape[-1] > 1:
-                action_index = torch.argmax(agent.action.u, dim=-1)
-            else:
-                action_index = agent.action.u.squeeze(-1).long()
 
+            u = agent.action.u[:, 0]      # (B,), values in [-1, 1]
+            n = 8 #Number of discrete actions
+            #This needs to happen because VMAS does some weird 
+            # continuous mapping and provides the action as a continuous value in [-1, 1]
+            action_index = torch.round((u + 1) / 2 * (n - 1)).long().clamp(0, n-1)
+            
             vx = torch.zeros_like(action_index, dtype=torch.float32)
             vy = torch.zeros_like(action_index, dtype=torch.float32)
             rot = torch.zeros_like(action_index, dtype=torch.float32)
@@ -498,7 +511,8 @@ class PathPlanningScenario(BaseScenario):
             # Revert to Direct Velocity Control (Kinematic)
             agent.state.vel[:, 0] = vx
             agent.state.vel[:, 1] = vy
-            agent.state.rot[:] = rot
+            agent.state.rot[:, 0] = rot
+            # Zero out forces so physics doesn't add extra acceleration
             agent.state.force[:] = 0.0
 
     def reward(self, agent: Agent):
@@ -509,7 +523,7 @@ class PathPlanningScenario(BaseScenario):
         
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
-        is_at_goal = dist < 0.2
+        is_at_goal = dist < 0.05
         
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
@@ -524,14 +538,33 @@ class PathPlanningScenario(BaseScenario):
         
         return rews
 
+    def done(self) -> torch.Tensor:
+        """Episode termination: reached goal, collision, or time-limit truncation.
+
+        NOTE on VMAS `terminated_truncated`:
+        - Environment always calls this method to compute **terminated**.
+        - If `make_env(..., max_steps=..., terminated_truncated=True)` is used,
+          VMAS will also compute a separate **truncated** flag from `max_steps`. we do not have to take care of truncation
+        """
+        # Distance to goal
+        dist = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
+        reached_goal = dist < 0.05  # same threshold as in reward
+
+        # Collision with any collidable entity
+        is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
+        for entity in self.world.agents + self.world.landmarks:
+            if entity != self.agent and entity.collide:
+                is_collision |= self.world.is_overlapping(self.agent, entity)
+
+        # Terminate if goal reached or collision
+        terminated = reached_goal | is_collision
+        return terminated
+
     def observation(self, agent: Agent):
         batch_dim = self.world.batch_dim
         device = self.world.device
-        # Veuillez noter que vous devriez implémenter un mécanisme pour obtenir les angles pour être 100% conforme 
-        # à l'étude (qui utilise Lidar signal et Local Target Position), mais la conversion ci-dessus est la 
-        # manière la plus courante d'adapter un vecteur plat de 800 éléments à l'entrée CNN du rapport.
 
-        # --- 1. Lidar Mesures (720 éléments) ---
+        # --- 1. Lidar Mesures (360 éléments) ---
         lidar_distances = agent.sensors[0].measure() # (B, 360)
 
         # Création des angles (0-360)
@@ -557,8 +590,21 @@ class PathPlanningScenario(BaseScenario):
 
         return raw_input_800
 
+    def info(self, agent: Agent) -> Dict[str, torch.Tensor]:
+        """
+        Per-agent info dict.
+
+        Returns the current position of the 'robot' agent for all parallel envs.
+        Shape: (batch_dim, 2).
+        """
+        # Always report robot position, regardless of which agent 'info' is called for
+        if agent.name == self.agent.name:
+            return self.agent.state.pos.clone()
+
     def set_max_dist(self, max_dist: float):
         """Sets the maximum spawning distance for curriculum learning."""
+        if max_dist < 0.13:
+            raise ValueError("max_dist must be at least 0.13 to allow valid spawning.")
         self._max_dist = max_dist
         if self.debug:
             print(f"[Scenario] Set spawn max_dist to: {self._max_dist}")
