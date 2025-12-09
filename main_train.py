@@ -19,7 +19,7 @@ epsilon = EPSILON_START
 NUM_ENVS = 256
 
 # Optionnel: rendu pendant l'entraînement
-RENDER_DURING_TRAINING = True      # passez à True pour activer
+RENDER_DURING_TRAINING = False      # passez à True pour activer
 RENDER_EVERY_N_STEPS = 10           # tous les N steps globaux, on déclenche une fenêtre de rendu
 RENDER_NUM_STEPS = 5                # nombre de steps consécutifs à rendre après déclenchement
 
@@ -59,6 +59,7 @@ def training_loop():
     samples_since_last_train = 0
     # Compteur local pour le rendu multi-steps
     render_steps_remaining = 0
+    numer_of_q_updates_since_target_update = 0
 
     max_dist_L = update_L(total_episodes)
     env.scenario.set_max_dist(max_dist_L)
@@ -70,7 +71,6 @@ def training_loop():
 
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
     while total_episodes < NUM_EPISODES:
-        current_step += 1
 
         # C. Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
         with torch.no_grad():
@@ -119,6 +119,7 @@ def training_loop():
         )
         replay_buffer.extend(transition)
         samples_since_last_train += NUM_ENVS
+        current_step += NUM_ENVS
 
         # --- Comptage des épisodes terminés & logging des retours ---
         done_mask = done_tensor.bool()                      # (NUM_ENVS,)
@@ -153,7 +154,7 @@ def training_loop():
                 dict_agent_names=True,
             )
             # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
-            latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
+            latest_robot_obs = obs_dict[0]["robot"]        # (NUM_ENVS, 2, 20, 20)
 
             # Tous les envs ont maintenant dans world l'état correct:
             # - envs done -> reset
@@ -168,7 +169,7 @@ def training_loop():
         if (
             len(replay_buffer) >= BATCH_SIZE
             and samples_since_last_train >= NUM_ENVS * TRAINING_FREQUENCY_STEPS
-            and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
+            #and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
         ):
             batch = replay_buffer.sample(BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
 
@@ -198,17 +199,17 @@ def training_loop():
 
             # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
             samples_since_last_train = 0
+            numer_of_q_updates_since_target_update += 1
 
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
-        if current_step % TARGET_UPDATE_FREQUENCY == 0:
+        if numer_of_q_updates_since_target_update % TARGET_UPDATE_FREQUENCY == 0:
             target_q_network.load_state_dict(q_network.state_dict())
-        
+            numer_of_q_updates_since_target_update = 0
 
         # Curriculum Learning basé sur le nombre total d'épisodes terminés
         max_dist_L = update_L(total_episodes)
         env.scenario.set_max_dist(max_dist_L)
 
-    #TODO: DEFNIR UNE CONDITION D'ARRET APPROPRIÉE
     return q_network
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
