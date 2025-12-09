@@ -135,18 +135,30 @@ def training_loop():
             total_episodes += episodes_this_step
 
             # --- Reset des environnements terminés ---
+            # On réinitialise chaque env terminé, sans récupérer les obs ici
             for idx in done_indices.tolist():
-                new_obs_dict = env.reset_at(idx)           # dict avec clé "robot"
-                new_robot_obs = new_obs_dict["robot"]
-                # new_robot_obs peut être (1, C, H, W) ou (C, H, W)
-                if new_robot_obs.ndim == 4:
-                    state_tensor[idx] = new_robot_obs[0]
-                else:
-                    state_tensor[idx] = new_robot_obs
+                env.reset_at(
+                    idx,
+                    return_observations=False,
+                    return_info=False,
+                    return_dones=False,
+                )
 
-            # Pour les envs non terminés, utiliser next_state_tensor
-            not_done_mask = ~done_mask
-            state_tensor[not_done_mask] = next_state_tensor[not_done_mask]
+            # Après tous les resets, on récupère une seule fois les observations pour tous les envs
+            obs_dict = env.get_from_scenario(
+                get_observations=True,
+                get_rewards=False,
+                get_infos=False,
+                get_dones=False,
+                dict_agent_names=True,
+            )
+            # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
+            latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
+
+            # Tous les envs ont maintenant dans world l'état correct:
+            # - envs done -> reset
+            # - envs non done -> états avancés par world.step()
+            state_tensor = latest_robot_obs
         else:
             # Aucun env n'est terminé: tous avancent avec next_state_tensor
             state_tensor = next_state_tensor
