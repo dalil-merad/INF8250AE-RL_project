@@ -18,10 +18,10 @@ ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 32 #1024
+NUM_ENVS = 128 #1024
 
 # Optionnel: rendu pendant l'entraînement
-RENDER_DURING_TRAINING = False      # passez à True pour activer
+RENDER_DURING_TRAINING = False       # passez à True pour activer
 RENDER_EVERY_N_STEPS = 10           # tous les N steps globaux, on déclenche une fenêtre de rendu
 RENDER_NUM_STEPS = 5                # nombre de steps consécutifs à rendre après déclenchement
 
@@ -82,7 +82,7 @@ def training_loop():
 
     log_f = open("training_log.csv", mode="w", newline="")
     log_writer = csv.writer(log_f)
-    log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon"])
+    log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn"])
     current_loss = 0.0
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
     pbar = tqdm(total=Params.NUM_EPISODES)
@@ -108,7 +108,7 @@ def training_loop():
             if render_steps_remaining > 0:
                 env.render(env_index=0, mode="human")
                 render_steps_remaining -= 1
-            elif current_step % RENDER_EVERY_N_STEPS == 0:
+            elif render_steps_remaining % RENDER_EVERY_N_STEPS == 0:
                 # Démarrer une nouvelle fenêtre de rendu
                 render_steps_remaining = RENDER_NUM_STEPS
                 env.render(env_index=0, mode="human")
@@ -162,9 +162,9 @@ def training_loop():
                 avg_r = sum(rewards_per_episode) / len(rewards_per_episode) if rewards_per_episode else 0
                 print('\r\033[2K\033[1G', end="", flush=True)
                 print(
-                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} | Eps: {epsilon:.2f}")
+                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} | Eps: {epsilon:.2f} | L: {max_dist_L:.2f}")
 
-                log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon])
+                log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon, max_dist_L])
                 log_f.flush()
 
             # --- Reset des environnements terminés ---
@@ -206,7 +206,6 @@ def training_loop():
             # and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
         ):
             batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
-
             states_tensor = batch["state"].to(DEVICE)        # (B, 2, 20, 20)
             actions_tensor = batch["action"].to(DEVICE).long()      # (B,)
             rewards_batch = batch["reward"].to(DEVICE).float()      # (B,)
@@ -251,9 +250,10 @@ def training_loop():
         env.scenario.set_max_dist(max_dist_L)
     pbar.close()
     log_f.close()
+    # --- 4. Évaluation Finale ---
     results["average_reward"] = cumulative_rewards_avg
-    results["last_loss"] = losses[0:160]
-    results["first_loss"] = losses[550:1200]
+    results["first_loss"] = losses[160:320]
+    results["last_loss"] = losses[550:1200]
     return q_network, results
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
@@ -273,7 +273,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
     except Exception as e:
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
 
-# --- 4. Évaluation Finale ---
 # Global Target Pos est la destination finale du parcours test (e.g., [4.0, 1.0])
 # GLOBAL_TARGET_POS = np.array([4.0, 1.0]) 
 # eval_rewards, avg_reward = evaluate_agent(q_network, env, GLOBAL_TARGET_POS, num_eval_episodes=5)

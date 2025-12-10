@@ -23,6 +23,8 @@ def generate_plots(results):
     if results["first_loss"]:
         loss_plot(results["first_loss"], output_path, "first")
     if results["last_loss"]:
+        print("last loss")
+        print(results["last_loss"])
         loss_plot(results["last_loss"], output_path, "end")
     if results["eval_reward"]:
         eval_reward(results["eval_reward"], output_path)
@@ -200,7 +202,7 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
 
     for r in range(height):
         for c in range(width):
-            char = map_data[r][c]
+            char = map_list[r][c]
             if char == 'W' or char == 'U':
                 a_star_grid[r, c] = 1 # Mur
 
@@ -297,12 +299,23 @@ def eval_path_agent(newtork_weight):
     start_pos, goal_pos, robot_path, map_number = path_agent(newtork_weight)
     # Tracé du résultat
     map_data = MAP_LAYOUTS[map_number]
-    start_pos = (int(start_pos[0]), int(start_pos[1]))
-    goal_pos = (int(goal_pos[0]), int(goal_pos[1]))
+    start_pos = (int(remapper_valeur(-start_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(start_pos[0], -2.8, 2.8, 0, 28)))
+    goal_pos = (int(remapper_valeur(-goal_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(goal_pos[0], -2.8, 2.8, 0, 28)))
     plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
     plt.figure()
     plt.plot(robot_path[0], robot_path[1])
     plt.show()
+
+def remapper_valeur(valeur, v_min, v_max, t_min, t_max):
+    if v_max == v_min:
+        return t_min  # Ou lever une erreur, selon le contexte
+    
+    ratio_normalise = (valeur - v_min) / (v_max - v_min)
+    
+    # Étape 2: Appliquer ce ratio à l'étendue de l'intervalle cible et ajouter l'offset
+    valeur_remappee = t_min + (t_max - t_min) * ratio_normalise
+    
+    return valeur_remappee
 
 def path_agent(checkpoint_path):
 
@@ -325,24 +338,39 @@ def path_agent(checkpoint_path):
         continuous_actions=False,
         max_steps=100,
         device=DEVICE, 
-        seed=0,
+        training = False,
         dict_spaces=True,
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
+
+    env.scenario.set_max_dist(2.0)
+    state_dict = env.reset_at(0) # dict d'obs par agent
+    state_tensor = state_dict["robot"]
+
     map_number = env.scenario.map_choice
     goal = env.scenario.goal.state.pos[0].tolist()
-    state_dict = env.reset() # dict d'obs par agent
-    state_tensor = state_dict["robot"]
     start = env.agents[0].state.pos.tolist()
     start = start[0]
     step = 0
+    render_steps_remaining = 4
     while not done and step < 100:
             with torch.no_grad():
                 q_values = q_network(state_tensor)
-                action = torch.argmax(q_values, dim=1)
-            next_state, _, _, info = env.step([action])
+                action = torch.argmax(q_values).unsqueeze(-1)
+            next_state, _, done, info = env.step([action])
             next_state = None if done else next_state
-            state_tensor = next_state["robot"]
+            if next_state:
+                state_tensor = next_state["robot"]
+
+            if True:
+                if render_steps_remaining > 0:
+                    env.render(env_index=0, mode="human")
+                    render_steps_remaining -= 1
+                elif render_steps_remaining % 5 == 0:
+                    # Démarrer une nouvelle fenêtre de rendu
+                    render_steps_remaining = 5
+                    env.render(env_index=0, mode="human")
+                    render_steps_remaining -= 1
 
             pos = info["robot"][0].tolist()
             pos_x, pos_y = pos[0], pos[1]

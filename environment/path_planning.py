@@ -304,8 +304,8 @@ class PathPlanningScenario(BaseScenario):
                 map_choices = torch.randint(0, 2, (1,), device=self.world.device)
                 self.map_choice = map_choices.item()
             else:
-                map_choices = torch.tensor([2], device=self.world.device)
-                self.map_choice = 2
+                map_choices = torch.randint(0, 3, (1,), device=self.world.device) #torch.tensor([2], device=self.world.device)
+                self.map_choice = map_choices.item()
 
         # 2. Configure Maps (Iterate via CPU to handle mixed maps)
         # First, reset all entities to "Out of Bounds" for these indices
@@ -535,8 +535,8 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 1.0
-        rews[is_collision] -= 1.0
+        rews[is_at_goal] += 20.0 #1.0
+        rews[is_collision] -= 10.0 #1.0
         rews += -0.01 # Time penalty
         
         return rews
