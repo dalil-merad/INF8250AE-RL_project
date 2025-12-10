@@ -24,6 +24,7 @@ class PathPlanningScenario(BaseScenario):
         self.grid_size = kwargs.pop("grid_size", 0.2)
         self.map_cols = kwargs.pop("map_cols", 28)
         self.map_rows = kwargs.pop("map_rows", 18)
+        self.map_choice = 0
 
         self.world_x_bound = self.map_cols * self.grid_size / 2.0  # 2.8m
         self.world_y_bound = self.map_rows * self.grid_size / 2.0  # 1.8m
@@ -301,8 +302,10 @@ class PathPlanningScenario(BaseScenario):
 
             if self.training:
                 map_choices = torch.randint(0, 2, (1,), device=self.world.device)
+                self.map_choice = map_choices.item()
             else:
                 map_choices = torch.tensor([2], device=self.world.device)
+                self.map_choice = 2
 
         # 2. Configure Maps (Iterate via CPU to handle mixed maps)
         # First, reset all entities to "Out of Bounds" for these indices

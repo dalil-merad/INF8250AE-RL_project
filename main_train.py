@@ -4,21 +4,21 @@ from agent.params import Params  # Importer tous les hyperparamètres
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# import numpy as np
-# import random
 from vmas import make_env
 import collections  # Ajouté pour les types d'actions
 from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage
 from tensordict import TensorDict
 from tqdm import tqdm
 import csv
+import numpy as np
+from utils_eval import generate_plots
 
 CNN_INPUT_CHANNELS = 2
 ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 1024
+NUM_ENVS = 32 #1024
 
 # Optionnel: rendu pendant l'entraînement
 RENDER_DURING_TRAINING = False      # passez à True pour activer
@@ -58,12 +58,19 @@ def training_loop():
 
     rewards_per_episode = collections.deque(maxlen=100)  # Utiliser deque pour la moyenne glissante
 
+    #Initialisation listes et variables pour analyse des resultats
+    results = {}
+    cumulative_rewards_avg = []
+    len_Reward_episode = 0
+    losses = []
+    cumulative_loss = 0
+
     # Compteurs globaux
     total_episodes = 0
     samples_since_last_train = 0
     # Compteur local pour le rendu multi-steps
     render_steps_remaining = 0
-    numer_of_q_updates_since_target_update = 0
+    training_step = 0
 
     max_dist_L = update_L(total_episodes)
     env.scenario.set_max_dist(max_dist_L)
@@ -141,6 +148,11 @@ def training_loop():
             for idx in done_indices.tolist():
                 rewards_per_episode.append(total_reward[idx].item())
                 total_reward[idx] = 0.0  # reset cumul pour ce env
+                len_Reward_episode += 1
+                if len_Reward_episode >= 100:
+                    avg_reward_100 = np.mean(rewards_per_episode)
+                    cumulative_rewards_avg.append(avg_reward_100)
+                    len_Reward_episode = 0
 
             total_episodes += episodes_this_step
             pbar.update(episodes_this_step)
@@ -189,8 +201,8 @@ def training_loop():
         # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
         # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
         if (
-            len(replay_buffer) >= Params.BATCH_SIZE
-            and samples_since_last_train >= NUM_ENVS * Params.TRAINING_FREQUENCY_STEPS
+            len(replay_buffer) >= Params.TRAINING_START_STEPS
+            and samples_since_last_train/NUM_ENVS % Params.TRAINING_FREQUENCY_STEPS == 0
             # and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
         ):
             batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
@@ -217,25 +229,32 @@ def training_loop():
             optimizer.step()
 
             current_loss = loss.item()
+            cumulative_loss += current_loss
 
             # Mise à jour Epsilon (par batch d'entraînement)
             epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
 
             # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
             samples_since_last_train = 0
-            numer_of_q_updates_since_target_update += 1
+            training_step += 1
 
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
-        if numer_of_q_updates_since_target_update % Params.TARGET_UPDATE_FREQUENCY == 0:
+        if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
             target_q_network.load_state_dict(q_network.state_dict())
-            numer_of_q_updates_since_target_update = 0
+        
+        if training_step % 100 == 0:
+            losses.append(np.mean(cumulative_loss/100))
+            cumulative_loss = 0
 
         # Curriculum Learning basé sur le nombre total d'épisodes terminés
         max_dist_L = update_L(total_episodes)
         env.scenario.set_max_dist(max_dist_L)
     pbar.close()
     log_f.close()
-    return q_network
+    results["average_reward"] = cumulative_rewards_avg
+    results["last_loss"] = losses[0:160]
+    results["first_loss"] = losses[550:1200]
+    return q_network, results
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
 
@@ -263,5 +282,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
-    trained_network = training_loop()
+    trained_network, results = training_loop()
     save_agent(trained_network, filename="ddqn_q_network.pt")
+    generate_plots(results=results)

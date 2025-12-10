@@ -6,34 +6,40 @@ import datetime
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import heapq # Pour gérer la queue de priorité d'A*
+from agent.ddqn_agent import QNetwork
+from environment.path_planning import PathPlanningScenario 
+from vmas import make_env
+from environment.map_layouts import MAP_LAYOUTS
 
-def generate_plot(results):
+def generate_plots(results):
     """
     :param results: Dict with the results needed for the plots
     """
     output_path = 'results/'+datetime.datetime.now().strftime('%y%m%d-%H%M%S')+'/'
     if not os.path.exists(output_path):
         os.makedirs(output_path)
-    average_cumulutativ_reward(results["average_reward"], output_path)
-    loss_plot(results["first_loss"], output_path, "first")
-    loss_plot(results["last_loss"], output_path, "end")
-    eval_reward(results["eval_reward"], output_path)
+    if results["average_reward"]:
+        average_cumulutativ_reward(results["average_reward"], output_path)
+    if results["first_loss"]:
+        loss_plot(results["first_loss"], output_path, "first")
+    if results["last_loss"]:
+        loss_plot(results["last_loss"], output_path, "end")
+    if results["eval_reward"]:
+        eval_reward(results["eval_reward"], output_path)
 
 def eval_reward(rewards, path):
     """
     :param rewards: avg_reward list for eval reward
     :param path: path name for plot saving
     """
-    timesteps = len(rewards)
+    timesteps = np.arange(len(rewards))
     plt.figure(figsize=(10, 6))
     plt.plot(timesteps, rewards, marker='o', linestyle='-', color='tab:blue')
 
     plt.title(f'Average Rewards', fontsize=16)
     plt.xlabel('Episode', fontsize=14)
     plt.ylabel('Episode reward', fontsize=14)
-    
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.xticks(timesteps)
+    plt.legend(fontsize=12)
     file_name = path + f"episode_reward_eval.png"
     plt.savefig(file_name)
 
@@ -45,16 +51,14 @@ def loss_plot(losses, path, step):
     :param path: path name for plot saving
     :param step: flag for indicating trainning time moment
     """
-    timesteps = len(losses)
+    timesteps = np.arange(len(losses))
     plt.figure(figsize=(10, 6))
     plt.plot(timesteps, losses, marker='o', linestyle='-', color='tab:blue', label='Loss')
     plt.title(f'Loss curve during {step} trainning)', fontsize=16)
     plt.xlabel('Timestep', fontsize=14)
     plt.ylabel('Loss', fontsize=14)
     
-    plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend(fontsize=12)
-    plt.xticks(timesteps)
     file_name = path + f"loss_{step}.png"
     plt.savefig(file_name)
 
@@ -71,9 +75,7 @@ def average_cumulutativ_reward(cumultative_Rewards, path):
     plt.xlabel('Epochs/100', fontsize=14)
     plt.ylabel('Average cumulative reward', fontsize=14)
     
-    plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend(fontsize=12)
-    plt.xticks(epochs)
     file_name = path + 'cumulative_reward_curve.png'
     plt.savefig(file_name)
 
@@ -268,7 +270,6 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
     # Positionne les tics mineurs entre les cellules (à N.5)
     ax.set_xticks(np.arange(-0.5, width, 1), minor=False)
     ax.set_yticks(np.arange(-0.5, height+.5, 1), minor=False)
-    print(np.arange(-0.5, height+0.5, 1))
 
     # Trace la grille en utilisant les tics mineurs
     ax.grid(which='major', color='gray', linestyle='-', linewidth=0.5)
@@ -291,6 +292,66 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
     cbar.ax.set_yticklabels(cbar_labels)
     
     plt.show()
+
+def eval_path_agent(newtork_weight):
+    start_pos, goal_pos, robot_path, map_number = path_agent(newtork_weight)
+    # Tracé du résultat
+    map_data = MAP_LAYOUTS[map_number]
+    start_pos = (int(start_pos[0]), int(start_pos[1]))
+    goal_pos = (int(goal_pos[0]), int(goal_pos[1]))
+    plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
+    plt.figure()
+    plt.plot(robot_path[0], robot_path[1])
+    plt.show()
+
+def path_agent(checkpoint_path):
+
+    #charger le réseau
+    CNN_INPUT_CHANNELS = 2
+    ACTION_SIZE = 8
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
+    weight_dict = torch.load(checkpoint_path)
+    q_network.load_state_dict(weight_dict)
+    q_network.eval()
+
+    path_X = []
+    path_Y = []
+    done = False
+    
+    env = make_env(
+        scenario=PathPlanningScenario(), 
+        num_envs=1, 
+        continuous_actions=False,
+        max_steps=100,
+        device=DEVICE, 
+        seed=0,
+        dict_spaces=True,
+        multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
+    )
+    map_number = env.scenario.map_choice
+    goal = env.scenario.goal.state.pos[0].tolist()
+    state_dict = env.reset() # dict d'obs par agent
+    state_tensor = state_dict["robot"]
+    start = env.agents[0].state.pos.tolist()
+    start = start[0]
+    step = 0
+    while not done and step < 100:
+            with torch.no_grad():
+                q_values = q_network(state_tensor)
+                action = torch.argmax(q_values, dim=1)
+            next_state, _, _, info = env.step([action])
+            next_state = None if done else next_state
+            state_tensor = next_state["robot"]
+
+            pos = info["robot"][0].tolist()
+            pos_x, pos_y = pos[0], pos[1]
+            path_X.append(pos_x)
+            path_Y.append(pos_y)
+            step += 1
+
+    path = [path_X, path_Y]
+    return start, goal, path, map_number
 
 
 if __name__ == "__main__":
@@ -321,11 +382,12 @@ if __name__ == "__main__":
     # 1. Définir le Départ et le But (ligne, colonne)
     # Le but 'S' est à (9, 12) dans la carte ci-dessus.
     # Nous allons choisir un point de départ.
-    start_pos = (4, 20)  # Par exemple, à la ligne 4, colonne 2 (à côté du mur WW)
-    goal_pos = (9, 13)   # Le But 'S' (ligne 9, colonne 13)
-    robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
+    #start_pos = (4, 20)  # Par exemple, à la ligne 4, colonne 2 (à côté du mur WW)
+    #goal_pos = (9, 13)   # Le But 'S' (ligne 9, colonne 13)
+    #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
-    plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
+    #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
+    eval_path_agent("ddqn_q_network.pt")
 
 """
 results = {}
