@@ -1,7 +1,7 @@
 import torch
 import typing
 from typing import Dict, List
-from .map_layouts import MAP_LAYOUTS
+from .map_layouts import MAP_LAYOUTS, ACTIVE_MAPS_EVALUATION, ACTIVE_MAPS_TRAINING
 
 from vmas.simulator.core import Agent, Landmark, World, Sphere, Box, Entity
 from vmas.simulator.scenario import BaseScenario
@@ -11,13 +11,15 @@ from vmas.simulator.dynamics.forward import Forward
 
 import numpy as np
 
+len_active_maps_training = len(ACTIVE_MAPS_TRAINING)
+len_active_evaluation_maps = len(ACTIVE_MAPS_EVALUATION)
 
 
 class PathPlanningScenario(BaseScenario):
-    def make_world(self, batch_dim: int , device: torch.device, **kwargs):
+    def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         # 1. Configuration
-        self.n_lidar_rays = kwargs.pop("n_lidar_rays", 360) # Paper uses 360 rays
-        self.lidar_range = kwargs.pop("lidar_range", 2.0)   # Paper uses 2m range
+        self.n_lidar_rays = kwargs.pop("n_lidar_rays", 360)  # Paper uses 360 rays
+        self.lidar_range = kwargs.pop("lidar_range", 2.0)    # Paper uses 2m range
         self.training = kwargs.pop("training", True)
         self.debug = kwargs.pop("debug_prints", False)
         
@@ -46,7 +48,8 @@ class PathPlanningScenario(BaseScenario):
                       drag=0.25)
         
         self.max_moving_obstacles = 0  
-        self.max_static_walls = 0     
+        self.max_static_walls = 0
+
         # Pre-parse maps
         self.parsed_maps = {}
         for map_id, layout in MAP_LAYOUTS.items():
@@ -62,18 +65,18 @@ class PathPlanningScenario(BaseScenario):
         # Mecanum wheels -> omnidirectional (Holonomic). VMAS agents are holonomic by default.
         self.agent = Agent(
             name="robot",
-            shape=Box(length=0.2, width=0.2), # Paper: 20x20cm gray square
+            shape=Box(length=0.2, width=0.2),  # Paper: 20x20cm gray square
             color=Color.GRAY,
             u_range=1.0, # Revert: Set back to 1.0 for direct velocity control
             sensors=[Lidar(
                 world,
                 n_rays=self.n_lidar_rays,
                 max_range=self.lidar_range,
-                entity_filter=lambda e: e.collide, # Fix: Only cast rays against collidable entities
+                entity_filter=lambda e: e.collide,  # Fix: Only cast rays against collidable entities
                 render=False,
             )],
             action_size=1, # 1 action dimension for discrete action indexing
-            discrete_action_nvec=[8], # 8 discrete actions (N, S, W, E, NW, NE, SW, SE
+            discrete_action_nvec=[8],  # 8 discrete actions (N, S, W, E, NW, NE, SW, SE
             dynamics=Forward()
         )
         world.add_agent(self.agent)
@@ -93,18 +96,18 @@ class PathPlanningScenario(BaseScenario):
         for i in range(self.max_moving_obstacles):
             obstacle = Agent(
                             name=f"moving_obs_{i}",
-                            shape=Box(length=0.2, width=0.2), # Paper: 20x20cm white square
+                            shape=Box(length=0.2, width=0.2),  # Paper: 20x20cm white square
                             color=Color.WHITE,
                             collide=True,
-                            mass=1000, # Heavy so the robot doesn't push them easily
-                            u_range=1e6, # Fix: Increase u_range to allow high forces for heavy scripted agents
-                            action_script=self.patrol_script, # THIS IS KEY: They follow a script
+                            mass=1000,  # Heavy so the robot doesn't push them easily
+                            u_range=1e6,  # Fix: Increase u_range to allow high forces for heavy scripted agents
+                            action_script=self.patrol_script,  # THIS IS KEY: They follow a script
             )
             # Store patrol metadata (start, end, speed) in the object for easy access
             obstacle.patrol_start = torch.zeros((batch_dim, 2), device=device)
             obstacle.patrol_end = torch.zeros((batch_dim, 2), device=device)
             obstacle.patrol_speed = 1.5  
-            obstacle.nominal_p_gain = 2000.0 # Fix: Increase gain to move heavy mass
+            obstacle.nominal_p_gain = 2000.0  # Fix: Increase gain to move heavy mass
             world.add_agent(obstacle)
             self.moving_obstacles.append(obstacle)
 
@@ -113,7 +116,7 @@ class PathPlanningScenario(BaseScenario):
         for i in range(self.max_static_walls):
             wall = Landmark(
                 name=f"wall_{i}",
-                shape=Box(length=0.2, width=0.2), # Default size, changed in reset
+                shape=Box(length=0.2, width=0.2),  # Default size, changed in reset
                 color=Color.WHITE,
                 collide=True
             )
@@ -131,7 +134,7 @@ class PathPlanningScenario(BaseScenario):
         for i in range(2):
             border = Landmark(
                 name=f"border_h_{i}",
-                shape=Box(length=(self.map_cols * self.grid_size) + 0.2 , width=border_thickness),
+                shape=Box(length=(self.map_cols * self.grid_size) + 0.2, width=border_thickness),
                 color=Color.BLACK,
                 collide=True,  # was False: make borders collidable so lidar can see them and they block the robot
             )
@@ -281,19 +284,34 @@ class PathPlanningScenario(BaseScenario):
 
     def reset_world_at(self, env_index: int = None):
         # 1. Decide which Maps to use (Mixed Batch Logic)
-        # If env_index is None when initializing at the start of training or evaluation(reset all), we pick randoms for everyone
+        # If env_index is None when initializing at the start of training or evaluation(reset all),
+        # we pick randoms for everyone
+
+        active_training_maps_tensor = torch.tensor(ACTIVE_MAPS_TRAINING, device=self.world.device)
+        active_evaluation_maps_tensor = torch.tensor(ACTIVE_MAPS_EVALUATION, device=self.world.device)
+
         if env_index is None:
             # Resetting ALL envs.
-            indice = None #If set to None, VMAS applies to all envs
+            indice = None  # If set to None, VMAS applies to all envs
             # Reset time for all
             self.global_time.fill_(0.0)
 
             if self.training:
                 # Randomly assign Map 0 or Map 1 to each env in the batch
-                map_choices = torch.randint(0, 2, (self.world.batch_dim,), device=self.world.device)
+                map_choices_idx = torch.randint(0,
+                                                len_active_maps_training,
+                                                (self.world.batch_dim,),
+                                                device=self.world.device
+                                                )
+                map_choices = active_training_maps_tensor[map_choices_idx]
             else:
                 # Evaluation Mode: Force Map 2 (High Level)
-                map_choices = torch.full((self.world.batch_dim,), 2, device=self.world.device)
+                map_choices_idx = torch.randint(0,
+                                                len_active_evaluation_maps,
+                                                (self.world.batch_dim,),
+                                                device=self.world.device
+                                                )
+                map_choices = active_evaluation_maps_tensor[map_choices_idx]
         else:
             # Resetting SINGLE env
             indice = env_index
@@ -301,10 +319,20 @@ class PathPlanningScenario(BaseScenario):
             self.global_time[env_index] = 0.0
 
             if self.training:
-                map_choices = torch.randint(0, 2, (1,), device=self.world.device)
-                self.map_choice = map_choices.item()
+                map_choices_idx = torch.randint(0,
+                                                len_active_maps_training,
+                                                (1,),
+                                                device=self.world.device
+                                                )
+                map_choices = active_training_maps_tensor[map_choices_idx]
+                self.map_choice = map_choices.item()  # TODO: does anything???
             else:
-                map_choices = torch.randint(0, 3, (1,), device=self.world.device) #torch.tensor([2], device=self.world.device)
+                map_choices_idx = torch.randint(0,
+                                                len_active_evaluation_maps,
+                                                (1,),
+                                                device=self.world.device
+                                                )
+                map_choices = active_evaluation_maps_tensor[map_choices_idx]
                 self.map_choice = map_choices.item()
 
         # 2. Configure Maps (Iterate via CPU to handle mixed maps)
@@ -412,7 +440,8 @@ class PathPlanningScenario(BaseScenario):
                 # 3b. Randomly sample Agent Position (within max_dist of goal)
                 # 1. Sample direction (angle)
                 angle = np.random.uniform(0, 2 * np.pi)
-                # 2. Sample distance (0.11m min to prevent trivial rewards and allow at least one movement to reach goal, up to L)
+                # 2. Sample distance (0.11m min to prevent trivial rewards and allow
+                # at least one movement to reach goal, up to L)
                 distance = np.random.uniform(0.13, self._max_dist)
                 
                 # Calculate agent position relative to goal
@@ -449,9 +478,12 @@ class PathPlanningScenario(BaseScenario):
                 # Fallback in case of failure (should be rare with 1000 attempts)
                 print(f"Warning: Failed to place agent/goal after 1000 attempts in environment {i}. Placing randomly.")
                 # Fallback positions must also respect the 5.6m x 3.6m bounds
-                self.agent.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])], device=self.world.device).unsqueeze(0), batch_index=i)
-                self.goal.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])], device=self.world.device).unsqueeze(0), batch_index=i)
-
+                self.agent.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
+                                                 np.random.uniform(y_range[0], y_range[1])],
+                                                device=self.world.device).unsqueeze(0), batch_index=i)
+                self.goal.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
+                                                np.random.uniform(y_range[0], y_range[1])],
+                                               device=self.world.device).unsqueeze(0), batch_index=i)
 
 
     def process_action(self, agent: Agent):

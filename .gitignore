@@ -7,3 +7,7 @@ environment/__pycache__/
 scenarios/__pycache__/
 *.pyc
 __pycache__/
+
+ddqn_q_network.pt
+
+logs/
