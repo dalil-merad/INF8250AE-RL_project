@@ -18,15 +18,15 @@ def generate_plots(results):
     output_path = 'results/'+datetime.datetime.now().strftime('%y%m%d-%H%M%S')+'/'
     if not os.path.exists(output_path):
         os.makedirs(output_path)
-    if results["average_reward"]:
+    if results.get("average_reward", None):
         average_cumulutativ_reward(results["average_reward"], output_path)
-    if results["first_loss"]:
+    if results.get("first_loss", None):
         loss_plot(results["first_loss"], output_path, "first")
-    if results["last_loss"]:
+    if results.get("last_loss", None):
         print("last loss")
         print(results["last_loss"])
         loss_plot(results["last_loss"], output_path, "end")
-    if results["eval_reward"]:
+    if results.get("eval_reward", None):
         eval_reward(results["eval_reward"], output_path)
 
 def eval_reward(rewards, path):
@@ -44,8 +44,6 @@ def eval_reward(rewards, path):
     plt.legend(fontsize=12)
     file_name = path + f"episode_reward_eval.png"
     plt.savefig(file_name)
-
-
 
 def loss_plot(losses, path, step):
     """    
