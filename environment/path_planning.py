@@ -89,6 +89,8 @@ class PathPlanningScenario(BaseScenario):
             collide=False
         )
         world.add_landmark(self.goal)
+        
+        self.local_target = torch.zeros((batch_dim, 2), device=device)
 
         # 4. Moving Obstacles (Distractors)
         # We create them as Agents so they can move, but we will script their motion.
@@ -472,6 +474,23 @@ class PathPlanningScenario(BaseScenario):
                 # Placement successful
                 self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
                 self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
+
+                temp_agent_pos = self.agent.state.pos[i].unsqueeze(0)
+                temp_goal_pos = self.goal.state.pos[i].unsqueeze(0)
+                
+                R = 2.0 
+                D_temp = temp_goal_pos - temp_agent_pos
+                norm_D_temp = torch.linalg.norm(D_temp, dim=-1, keepdim=True)
+                
+                # Logique simplifiée car c'est juste un initialisation
+                if norm_D_temp.item() > R:
+                    alpha_temp = R / norm_D_temp
+                    initial_local_target = temp_agent_pos + alpha_temp * D_temp
+                else:
+                    initial_local_target = temp_goal_pos
+                    
+                self.local_target[i] = initial_local_target.squeeze(0)
+
                 placed = True
 
             if not placed:
@@ -559,6 +578,10 @@ class PathPlanningScenario(BaseScenario):
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
         is_at_goal = dist < 0.05
+
+        #Distance to local goal
+        dist_local = torch.linalg.norm(agent.state.pos - self.local_target, dim=-1)
+        local_dist_penalty = -0.01 * dist_local
         
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
@@ -567,9 +590,12 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 20.0 #1.0
-        rews[is_collision] -= 10.0 #1.0
+        rews[is_at_goal] += 1.0
+        rews[is_collision] -= 1.0
         rews += -0.01 # Time penalty
+        rews += local_dist_penalty
+
+        self.local_target = self._get_goal_proxy_pos(agent)
         
         return rews
 
@@ -612,8 +638,11 @@ class PathPlanningScenario(BaseScenario):
         
         # --- 2. Cible Locale (80 éléments) ---
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
+        target_pos = self._get_goal_proxy_pos(agent)
+        intersection_point = target_pos - agent.state.pos
+
         # 40 copies de (dX, dY) -> 80 éléments (B, 80)
-        local_target_vector = delta_pos.repeat(1, 40) 
+        local_target_vector = intersection_point.repeat(1, 40)#delta_pos.repeat(1, 40) 
         # Total éléments: B * 80.
         local_target_input_reshaped = local_target_vector.reshape(batch_dim, 2, 2, 20)
 
@@ -643,6 +672,56 @@ class PathPlanningScenario(BaseScenario):
         self._max_dist = max_dist
         if self.debug:
             print(f"[Scenario] Set spawn max_dist to: {self._max_dist}")
+
+    # À ajouter dans la classe PathPlanningScenario
+
+    def _get_goal_proxy_pos(self, agent: Agent):
+        """
+        Calcule la position du point d'intersection entre le segment agent-goal
+        et le cercle de rayon 2.0m centré sur l'agent,
+        ou la position du goal si celui-ci est à moins de 2.0m.
+        
+        Args:
+            agent (Agent): L'agent robot.
+            
+        Returns:
+            torch.Tensor: Tenseur de position (B, 2) du point cible.
+        """
+        R = 2.0 # Rayon du cercle (2 mètres)
+        
+        # D: Vecteur directionnel (Goal - Agent)
+        # self.goal.state.pos est de taille (B, 2)
+        # agent.state.pos est de taille (B, 2)
+        D = self.goal.state.pos - agent.state.pos
+        
+        # norm_D: Distance entre l'agent et le but, de taille (B, 1)
+        norm_D = torch.linalg.norm(D, dim=-1, keepdim=True)
+        
+        # ----------------------------------------------------
+        # Cas 1: Distance > R (Agent est loin, le but est le point sur le cercle)
+        # ----------------------------------------------------
+        mask_far = norm_D > R
+        
+        # Éviter la division par zéro en utilisant torch.where
+        # Nous remplaçons les zéros par un '1' pour le calcul du rapport, 
+        # mais le masque garantira que ce calcul n'est pas utilisé pour les cas près.
+        safe_norm_D = torch.where(norm_D == 0, torch.tensor(1.0, device=norm_D.device), norm_D)
+        
+        # Facteur d'échelle: alpha = R / ||D||
+        alpha = R / safe_norm_D
+        
+        # Position cible P_int_far = Agent.pos + alpha * D
+        P_int_far = agent.state.pos + alpha * D
+        
+        # ----------------------------------------------------
+        # Cas 2: Distance <= R (Agent est près, le but est la position du Goal)
+        # ----------------------------------------------------
+        P_int_near = self.goal.state.pos
+        
+        # Combinaison des deux cas
+        goal_proxy_pos = torch.where(mask_far, P_int_far, P_int_near)
+        
+        return goal_proxy_pos
 
     @property
     def max_dist(self) -> float:
