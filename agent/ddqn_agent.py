@@ -1,157 +1,204 @@
-from collections import deque
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import random
 import numpy as np
+import random
+import torch.nn.functional as F
+from collections import deque
 from .params import Params
 
 
 class QNetwork(nn.Module):
     def __init__(self, state_size, action_size):
         super(QNetwork, self).__init__()
-        self.conv1 = nn.Conv2d(state_size, 16, kernel_size=2, stride=2)
-        # self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=2, stride=2)
-        self.conv3 = nn.Conv2d(32, 128, kernel_size=5, stride=1)
-        self.fc1 = nn.Linear(128, 256)
+
+        # 1. Use the passed n_rays (from main_train.py), fallback to Params only if necessary
+        self.n_rays = Params.N_LIDAR_RAYS
+
+        # 2. Determine if input is large enough for Convolutions
+        # We use 3 layers of Kernel=3. This roughly requires length >= 8 to be useful/safe.
+        # If n_rays is tiny (0, 1, 2, 5...), we skip convs to prevent crashes.
+        self.use_conv = self.n_rays >= 8
+
+        if self.use_conv:
+            # Standard 1D Convolutions for Lidar sequences
+            self.conv1 = nn.Conv1d(in_channels=state_size, out_channels=16, kernel_size=3, stride=2, padding=1)
+            self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1)
+            self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1)
+        else:
+            # Fallback for tiny inputs: No layers here, we will just flatten in forward()
+            pass
+
+        # 3. AUTOMATIC SIZE CALCULATION
+        # Run a dummy pass to check output size.
+        # This handles ANY n_rays (0, 10, 360) without math errors.
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, state_size, self.n_rays)
+
+            if self.use_conv:
+                x = self.conv1(dummy_input)
+                x = self.conv2(x)
+                x = self.conv3(x)
+            else:
+                # If skipping convs, pass input directly
+                x = dummy_input
+
+            self.flat_size = x.view(1, -1).size(1)
+
+            if self.flat_size == 0 and self.n_rays == 0:
+                print(
+                    "WARNING: n_rays is 0. The network input is empty. The agent is blind and will rely solely on bias.")
+
+        self.fc1 = nn.Linear(self.flat_size, 256)
         self.fc2 = nn.Linear(256, action_size)
 
     def forward(self, state):
-        x = torch.relu(self.conv1(state))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
+        # state shape: (Batch, 4, N_RAYS)
+
+        if self.use_conv:
+            x = F.relu(self.conv1(state))
+            x = F.relu(self.conv2(x))
+            x = F.relu(self.conv3(x))
+        else:
+            # If input is too small for convs, just use it as is (or flatten it)
+            x = state
+
+        # Flatten
         x = x.reshape(x.shape[0], -1)
-        x = torch.relu(self.fc1(x))
+
+        x = F.relu(self.fc1(x))
         return self.fc2(x)
+
 
 class ReplayBuffer:
     """
-    Mémoire d'expérience pour stocker les transitions (état, action, récompense, état_suivant, terminé).
-    Utilise deque pour maintenir une taille maximale et gérer la politique FIFO (First-In First-Out).
+    Experience Replay Buffer.
+    Stores: [s, a, r, s_next, done]
     """
+
     def __init__(self, capacity):
-        # La taille du buffer est définie par le rapport à 40 000 échantillons 
         self.buffer = deque(maxlen=capacity)
 
     def add(self, state, action, reward, next_state, done):
-        """
-        Ajoute une transition au buffer.
-        L'expérience se compose de [s, a, r, s₁, d][cite: 222].
-        """
-        # Note: 'state' et 'next_state' doivent être des numpy arrays ou des listes
-        # pour éviter de stocker des tenseurs PyTorch lourds dans la mémoire.
+        # IMPORTANT: Ensure inputs are CPU numpy arrays or python scalars to save VRAM
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample(self, batch_size):
-        """
-        Échantillonne aléatoirement un lot (mini-batch) de transitions pour l'entraînement.
-        """
         if len(self.buffer) < batch_size:
-            return None 
+            return None
 
         batch = random.sample(self.buffer, batch_size)
-        
-        # Déballer le lot en tuples
         states, actions, rewards, next_states, dones = zip(*batch)
-        
-        # Le reste de la conversion en tenseurs PyTorch se fera dans la boucle d'entraînement
         return states, actions, rewards, next_states, dones
 
     def __len__(self):
-        """
-        Retourne la taille actuelle de la mémoire.
-        """
         return len(self.buffer)
-    
+
+
 def evaluate_agent(q_network: nn.Module, env, global_target_pos: np.ndarray, num_eval_episodes: int = 5):
     """
-    Évalue la performance de l'agent DDQN sur la carte de test (Map 2) en naviguant vers une cible globale.
-
-    :param q_network: Le réseau Q entraîné.
-    :param env: L'instance PathPlanningScenario.
-    :param global_target_pos: La position finale (x, y) de la navigation globale.
-    :param num_eval_episodes: Nombre d'épisodes de test à exécuter.
+    Evaluates the agent using VMAS API.
     """
+    q_network.eval()  # Set network to eval mode
     rewards_per_eval_episode = []
-    
-    # Convertir la cible globale finale en tenseur pour la comparaison dans la boucle
-    FINAL_GOAL_TENSOR = torch.tensor(global_target_pos, device=env.world.device, dtype=torch.float32)
+
+    # Target global tensor
+    FINAL_GOAL_TENSOR = torch.tensor(global_target_pos, device=env.device, dtype=torch.float32)
+
+    # We will use the first environment index (0) for evaluation
+    eval_index = 0
 
     for episode in range(num_eval_episodes):
-        # 1. Configuration de l'environnement de test
-        # Assurez-vous que l'initialisation bascule en mode évaluation (Map 2)
-        env.training = False 
-        
-        # Le reset place l'agent et la CIBLE LOCALE INITIALE (self.goal) dans la zone de test (Map 2)
-        state_tensor_800, info = env.reset()  # state_tensor_800 est de forme (B, 2, 20, 20)
-        state_np = state_tensor_800.cpu().numpy().squeeze(0)  # Convertir en numpy pour la gestion
+        # 1. Reset specific env index
+        # VMAS reset_at returns nothing, it updates internal state. 
+        # We must fetch obs separately or rely on reset_at signature if modified, 
+        # but standard VMAS usage is reset -> get_obs.
+        env.reset_at(eval_index)
+
+        # Manually set goal to start position if needed, or rely on random spawn
+        # Ideally, for consistent testing, you might want to force a specific spawn here.
+
+        # Get initial observation
+        obs_dict = env.get_from_scenario(get_observations=True, dict_agent_names=True)
+        # Check if obs_dict is a list (some VMAS versions) or dict
+        if isinstance(obs_dict, list):
+            state_tensor = obs_dict[0]['robot'][eval_index].unsqueeze(0)  # (1, 2, 20, 20)
+        else:
+            state_tensor = obs_dict['robot'][eval_index].unsqueeze(0)
 
         total_reward = 0.0
-        
-        # Le but atteint (reward > 0.5) est notre signal pour changer la cible locale.
-        # L'objectif est de remplacer self.goal par une NOUVELLE cible locale menant à FINAL_GOAL_TENSOR.
+        current_pos = env.scenario.agent.state.pos[eval_index]  # Direct access to pos
+
+        # Reset local tracking
+        prev_reward = -1.0
+        done = False
 
         for step in range(Params.MAX_TEST_STEPS):
-            prev_reward = -1
-            
-            # --- 2. Mise à jour Dynamique de la Cible Locale (Simuler le Planificateur de Haut Niveau) ---
-            
-            # Distance à la cible globale (calculé en dehors de l'environnement pour le critère d'arrêt)
-            current_pos = env.agent.state.pos.squeeze(0)
+            # --- 2. High Level Planner Logic ---
             dist_to_final_goal = torch.linalg.norm(current_pos - FINAL_GOAL_TENSOR)
 
-            if dist_to_final_goal < 0.2:  # Cible globale finale atteinte
-                total_reward += 10.0  # Récompense bonus pour la fin du parcours
-                break 
-
-            # Simuler l'atteinte d'une cible locale (la récompense de +1)
-            # Votre environnement renvoie un reward de +1 quand la cible locale est atteinte.
-            # Si le reward du pas précédent était +1, cela signifie que nous devons définir une NOUVELLE cible locale.
-            if step > 0 and prev_reward > 0.5:
-                # Le planificateur de haut niveau place une nouvelle cible LOCALE
-                # (self.goal) à l'intersection du rayon Lidar (2m) et du chemin vers la cible finale.
-
-                # 1. Calculer le vecteur vers la cible finale
-                target_vec = FINAL_GOAL_TENSOR - current_pos
-
-                # 2. Normaliser ce vecteur
-                target_norm = target_vec / torch.linalg.norm(target_vec)
-
-                # 3. La nouvelle cible locale est à la limite du rayon Lidar (2.0m) dans cette direction
-                new_local_goal_pos = current_pos + target_norm * env.lidar_range
-
-                # 4. Déplacer l'entité self.goal à cette nouvelle position locale
-                env.goal.set_pos(new_local_goal_pos)
-            
-            # --- 3. Sélection de l'Action (Exploitation Pure) ---
-            
-            state_tensor = torch.tensor(state_np, dtype=torch.float32).unsqueeze(0)
-            q_values = q_network(state_tensor)
-            action = torch.argmax(q_values).item()
-
-            # --- 4. Exécuter l'action ---
-            next_state_tensor_800, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-            total_reward += reward
-            
-            # Mettre à jour les états et la récompense précédente
-            state_np = next_state_tensor_800.cpu().numpy().squeeze(0)
-            prev_reward = reward
-            
-            # 5. Condition de collision (terminer l'épisode si le robot heurte un obstacle)
-            if reward < -0.5:  # Collision: -1 - 0.01 = -1.01
+            if dist_to_final_goal < 0.2:
+                total_reward += 10.0
                 break
-                
+
+                # If we hit the local goal (reward ~ +10.0 in new scale, or +1.0 in old)
+            # We check for > 0.5 as a generic "positive reward" threshold
+            if step > 0 and prev_reward > 0.5:
+                target_vec = FINAL_GOAL_TENSOR - current_pos
+                target_norm = target_vec / (torch.linalg.norm(target_vec) + 1e-6)
+                new_local_goal_pos = current_pos + target_norm * env.scenario.lidar_range
+
+                # Update VMAS goal entity
+                env.scenario.goal.set_pos(new_local_goal_pos.unsqueeze(0), batch_index=eval_index)
+
+            # --- 3. Action Selection ---
+            with torch.no_grad():
+                q_values = q_network(state_tensor)
+                action_idx = torch.argmax(q_values, dim=1)  # (1,)
+
+            # --- 4. Step ---
+            # VMAS expects a LIST of actions, one per agent.
+            # We have 1 agent. The action must be shape (B, 1) or (B,) depending on scenario.
+            # Our scenario expects (B, 1) for .u[:, 0]
+            action_input = action_idx.unsqueeze(-1)  # (1, 1)
+
+            # We step ALL environments, but we only care about index 0.
+            # Ideally we'd have a separate eval env, but here we just step everything 
+            # and ignore others (or pass dummies). 
+            # For simplicity in this function, we assume env is just for eval or we tolerate stepping others.
+            # To be safe, we construct a batch of actions.
+
+            full_action = torch.zeros((env.num_envs, 1), device=env.device, dtype=torch.long)
+            full_action[eval_index] = action_input
+
+            obs_dict, reward_dict, done_tensor, info_dict = env.step([full_action])
+
+            # Extract data for our specific env index
+            next_state_tensor = obs_dict['robot'][eval_index].unsqueeze(0)
+            reward = reward_dict['robot'][eval_index].item()
+            done = done_tensor[eval_index].item()
+
+            total_reward += reward
+            state_tensor = next_state_tensor
+            current_pos = env.scenario.agent.state.pos[eval_index]
+            prev_reward = reward
+
+            if done:
+                break
+
+            # Collision termination check (if not handled by Done)
+            if reward < -4.0:  # Assuming -5.0 is collision
+                break
+
         rewards_per_eval_episode.append(total_reward)
 
-    env.training = True  # Revenir au mode entraînement
-    average_reward = np.mean(rewards_per_eval_episode)
+    q_network.train()  # Reset to train mode
+    average_reward = np.mean(rewards_per_eval_episode) if rewards_per_eval_episode else 0.0
     return rewards_per_eval_episode, average_reward
+
 
 def update_L(n_steps):
     """
-    Met à jour la distance L entre le point de départ et la cible selon l'Équation (10) [cite: 135-139].
+    Updates curriculum distance L.
     """
     if n_steps <= Params.N1_THRESHOLD:
         L = Params.L_MIN
@@ -159,5 +206,5 @@ def update_L(n_steps):
         L = Params.L_MIN + Params.M_SEARCH_SPEED * (n_steps - Params.N1_THRESHOLD)
     else:
         L = Params.L_MAX
-    
+
     return L

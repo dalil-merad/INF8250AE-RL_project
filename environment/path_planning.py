@@ -5,10 +5,12 @@ from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color
 from vmas.simulator.dynamics.common import Dynamics
+from agent.params import Params
 
-TIMESTEP_REWARD = -0.01
-GOAL_REWARD = 10.0
-COLLISION_REWARD = -10.0
+
+TIMESTEP_REWARD = -1.0
+GOAL_REWARD = 100.0
+COLLISION_REWARD = -100.0
 
 
 class KinematicDynamics(Dynamics):
@@ -22,11 +24,11 @@ class KinematicDynamics(Dynamics):
 class PathPlanningScenario(BaseScenario):
     def __init__(self):
         super().__init__()
-        self.lidar_range = 2.0  # Lidar max range
-        self.n_lidar_rays = 360  # Number of Lidar rays
+        self.lidar_range = Params.LIDAR_RANGE  # Lidar max range
+        self.n_lidar_rays = Params.N_LIDAR_RAYS  # Number of Lidar rays
         self.world_size = 2.0  # World is a square from -2 to 2
-        self.agent_radius = 0.1  # Agent radius
-        self.goal_radius = 0.1  # Goal radius
+        self.agent_radius = Params.AGENT_RADIUS  # Agent radius
+        self.goal_radius = Params.GOAL_RADIUS  # Goal radius
 
         self._max_dist = 4.0  # Default max distance
 
@@ -146,31 +148,27 @@ class PathPlanningScenario(BaseScenario):
         return at_goal | is_collision
 
     def observation(self, agent: Agent):
-        # Shape: (B, 2, 20, 20)
         batch_dim = self.world.batch_dim
         device = self.world.device
+        n_rays = Params.N_LIDAR_RAYS
 
-        # 1. Lidar Data: Shape (B, 360)
+        # 1. Lidar Data: (B, 2, N_RAYS)
+        # Channel 0: Distances, Channel 1: Angles
         lidar_distances = agent.sensors[0].measure()
+        lidar_angles = torch.linspace(0, 1, n_rays, device=device).unsqueeze(0).expand(batch_dim, -1)
 
-        # Create Angle channel: Shape (B, 360)
-        lidar_angles = torch.linspace(0, 1, self.n_lidar_rays, device=device).unsqueeze(0).expand(batch_dim, -1)
+        # Shape: (B, 2, N_RAYS)
+        lidar_data = torch.stack([lidar_distances, lidar_angles], dim=1)
 
-        # Stack -> (B, 360, 2) -> Permute to (B, 2, 360)
-        lidar_combined = torch.stack([lidar_distances, lidar_angles], dim=2).permute(0, 2, 1)
-
-        # Reshape to (B, 2, 18, 20)
-        lidar_reshaped = lidar_combined.reshape(batch_dim, 2, 18, 20)
-
-        # 2. Relative Goal Position: Shape (B, 2)
+        # 2. Goal Data: (B, 2)
+        # We repeat the goal across all rays so the network can "compare" every ray to the goal.
         rel_pos = self.goal.state.pos - agent.state.pos
+        # Shape: (B, 2, N_RAYS)
+        goal_data = rel_pos.unsqueeze(2).expand(-1, -1, n_rays)
 
-        # Expand to fill (B, 2, 2, 20)
-        rel_pos_expanded = rel_pos.repeat(1, 40)  # (B, 80)
-        target_reshaped = rel_pos_expanded.reshape(batch_dim, 2, 2, 20)
-
-        # 3. Concatenate along height (dim 2)
-        obs = torch.cat([lidar_reshaped, target_reshaped], dim=2)
+        # 3. Combine: (B, 4, N_RAYS)
+        # Now you have 4 channels: [Distance, Angle, Goal_X, Goal_Y]
+        obs = torch.cat([lidar_data, goal_data], dim=1)
 
         return obs
 

@@ -299,7 +299,7 @@ def eval_path_agent(newtork_weight):
     map_data = MAP_LAYOUTS[map_number]
     start_pos = (int(remapper_valeur(-start_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(start_pos[0], -2.8, 2.8, 0, 28)))
     goal_pos = (int(remapper_valeur(-goal_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(goal_pos[0], -2.8, 2.8, 0, 28)))
-    plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
+    # plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
     plt.figure()
     plt.plot(robot_path[0], robot_path[1])
     plt.show()
@@ -345,7 +345,7 @@ def path_agent(checkpoint_path):
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
-    map_number = env.scenario.map_choice
+    # map_number = env.scenario.map_choice
     goal = env.scenario.goal.state.pos[0].tolist()
     start = env.agents[0].state.pos.tolist()
     start = start[0]
@@ -370,6 +370,7 @@ def path_agent(checkpoint_path):
                     env.render(env_index=0, mode="human")
                     render_steps_remaining -= 1
 
+            print(info["robot"])
             pos = info["robot"][0].tolist()
             pos_x, pos_y = pos[0], pos[1]
             path_X.append(pos_x)
@@ -377,7 +378,7 @@ def path_agent(checkpoint_path):
             step += 1
 
     path = [path_X, path_Y]
-    return start, goal, path, map_number
+    return start, goal, path  # , map_number
 
 
 if __name__ == "__main__":

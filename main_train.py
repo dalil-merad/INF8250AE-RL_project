@@ -13,39 +13,41 @@ import csv
 import numpy as np
 from utils_eval import generate_plots
 
-CNN_INPUT_CHANNELS = 2
+CNN_INPUT_CHANNELS = 4
 ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 128  #1024
+NUM_ENVS = 32  # 1024
 
 # Optionnel: rendu pendant l'entraînement
-RENDER_DURING_TRAINING = False       # passez à True pour activer
-RENDER_EVERY_N_STEPS = 10           # tous les N steps globaux, on déclenche une fenêtre de rendu
-RENDER_NUM_STEPS = 5                # nombre de steps consécutifs à rendre après déclenchement
+RENDER_DURING_TRAINING = False  # passez à True pour activer
+RENDER_EVERY_N_STEPS = 10  # tous les N steps globaux, on déclenche une fenêtre de rendu
+RENDER_NUM_STEPS = 5  # nombre de steps consécutifs à rendre après déclenchement
 
 LOG_EVERY_N_EPISODES = 20  # Fréquence de logging des statistiques
+
 
 def training_loop():
     global current_step, epsilon
     # Initialisation de l'environnement VMAS (PathPlanningScenario)
     env = make_env(
-        scenario=PathPlanningScenario(), 
-        num_envs=NUM_ENVS, 
+        scenario=PathPlanningScenario(),
+        num_envs=NUM_ENVS,
         continuous_actions=False,
         max_steps=Params.MAX_STEPS_PER_EPISODE,
-        device=DEVICE, 
+        device=DEVICE,
         seed=0,
         dict_spaces=True,
-        multidiscrete_actions=True,  # <- tell VMAS we use MultiDiscrete
-    ) 
+        multidiscrete_actions=True,  # <- tells we use MultiDiscrete
+    )
 
     # Initialisation des réseaux (CNN)
     q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
     target_q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
     target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
+    q_network.train()
 
     # Autres initialisations
     optimizer = optim.Adam(q_network.parameters(), lr=Params.LEARNING_RATE)
@@ -58,7 +60,7 @@ def training_loop():
 
     rewards_per_episode = collections.deque(maxlen=100)  # Utiliser deque pour la moyenne glissante
 
-    #Initialisation listes et variables pour analyse des resultats
+    # Initialisation listes et variables pour analyse des resultats
     results = {}
     cumulative_rewards_avg = []
     len_Reward_episode = 0
@@ -76,21 +78,31 @@ def training_loop():
     env.scenario.set_max_dist(max_dist_L)
 
     # Réinitialisation initiale de tous les environnements
-    state_dict = env.reset()            # dict d'obs par agent
-    state_tensor = state_dict["robot"]  # (NUM_ENVS, 2, 20, 20)
+    state_dict = env.reset()  # dict d'obs par agent
+    state_tensor = state_dict["robot"]  # (NUM_ENVS, 4, N_RAYS)
+
+    # FIX 1: Initial Squeeze
+    if state_tensor.dim() == 4 and state_tensor.shape[0] == 1:
+        state_tensor = state_tensor.squeeze(0)
+
     total_reward = torch.zeros(NUM_ENVS, dtype=torch.float32, device=DEVICE)
 
     log_f = open("training_log.csv", mode="w", newline="")
     log_writer = csv.writer(log_f)
     log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn"])
     current_loss = 0.0
+
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
     pbar = tqdm(total=Params.NUM_EPISODES)
     while total_episodes < Params.NUM_EPISODES:
 
-        # C. Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
+        # Safety Check (Usually redundant if we fix next_state below, but good to keep)
+        if state_tensor.dim() == 4 and state_tensor.shape[0] == 1:
+            state_tensor = state_tensor.squeeze(0)
+
+        # Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
         with torch.no_grad():
-            q_values = q_network(state_tensor)           # (NUM_ENVS, ACTION_SIZE)
+            q_values = q_network(state_tensor)  # (NUM_ENVS, ACTION_SIZE)
             exploitative_actions = torch.argmax(q_values, dim=1)  # (NUM_ENVS,)
 
             is_explore = torch.rand(NUM_ENVS, device=DEVICE) < epsilon
@@ -114,9 +126,14 @@ def training_loop():
                 env.render(env_index=0, mode="human")
                 render_steps_remaining -= 1
 
-        next_state_tensor = next_state_dict["robot"]          # (NUM_ENVS, 2, 20, 20)
-        reward_tensor = reward_dict["robot"].to(DEVICE)       # (NUM_ENVS,)
-        done_tensor = done_tensor.to(DEVICE)                  # (NUM_ENVS,) bool
+        next_state_tensor = next_state_dict["robot"]  # (NUM_ENVS, 4, N_RAYS)
+
+        # FIX 2: Squeeze next_state IMMEDIATELY before Replay Buffer
+        if next_state_tensor.dim() == 4 and next_state_tensor.shape[0] == 1:
+            next_state_tensor = next_state_tensor.squeeze(0)
+
+        reward_tensor = reward_dict["robot"].to(DEVICE)  # (NUM_ENVS,)
+        done_tensor = done_tensor.to(DEVICE)  # (NUM_ENVS,) bool
 
         # Mise à jour des récompenses cumulées par environnement
         total_reward += reward_tensor
@@ -124,11 +141,11 @@ def training_loop():
         # --- Ajout au replay buffer en parallèle pour tous les envs ---
         transition = TensorDict(
             {
-                "state": state_tensor,                     # (NUM_ENVS, 2, 20, 20)
-                "action": action_indices,                  # (NUM_ENVS,)
-                "reward": reward_tensor,                   # (NUM_ENVS,)
-                "next_state": next_state_tensor,           # (NUM_ENVS, 2, 20, 20)
-                "done": done_tensor.float(),               # (NUM_ENVS,)
+                "state": state_tensor,  # (NUM_ENVS, 4, N_RAYS)
+                "action": action_indices,  # (NUM_ENVS,)
+                "reward": reward_tensor,  # (NUM_ENVS,)
+                "next_state": next_state_tensor,  # (NUM_ENVS, 4, N_RAYS)
+                "done": done_tensor.float(),  # (NUM_ENVS,)
             },
             batch_size=[NUM_ENVS],
             device=DEVICE,
@@ -138,7 +155,7 @@ def training_loop():
         current_step += NUM_ENVS
 
         # --- Comptage des épisodes terminés & logging des retours ---
-        done_mask = done_tensor.bool()                      # (NUM_ENVS,)
+        done_mask = done_tensor.bool()  # (NUM_ENVS,)
         episodes_this_step = done_mask.long().sum().item()
 
         if episodes_this_step > 0:
@@ -188,11 +205,13 @@ def training_loop():
             # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
             if isinstance(obs_dict, list):
                 obs_dict = obs_dict[0]
-            latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
+            latest_robot_obs = obs_dict["robot"]
+
+            # FIX 3: Squeeze the observations coming from partial resets
+            if latest_robot_obs.dim() == 4 and latest_robot_obs.shape[0] == 1:
+                latest_robot_obs = latest_robot_obs.squeeze(0)
 
             # Tous les envs ont maintenant dans world l'état correct:
-            # - envs done -> reset
-            # - envs non done -> états avancés par world.step()
             state_tensor = latest_robot_obs
         else:
             # Aucun env n'est terminé: tous avancent avec next_state_tensor
@@ -201,20 +220,20 @@ def training_loop():
         # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
         # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
         if (
-            len(replay_buffer) >= Params.TRAINING_START_STEPS
-            and samples_since_last_train/NUM_ENVS % Params.TRAINING_FREQUENCY_STEPS == 0
-            # and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
+                len(replay_buffer) >= Params.TRAINING_START_STEPS
+                and samples_since_last_train / NUM_ENVS % Params.TRAINING_FREQUENCY_STEPS == 0
+                # and samples_since_last_train % (NUM_ENVS * TRAINING_FREQUENCY_STEPS) == 0
         ):
             batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
-            states_tensor = batch["state"].to(DEVICE)        # (B, 2, 20, 20)
-            actions_tensor = batch["action"].to(DEVICE).long()      # (B,)
-            rewards_batch = batch["reward"].to(DEVICE).float()      # (B,)
-            next_states_batch = batch["next_state"].to(DEVICE)      # (B, 2, 20, 20)
-            dones_batch = batch["done"].to(DEVICE).float()          # (B,)
+            states_tensor = batch["state"].to(DEVICE)  # (B, 4, N_RAYS)
+            actions_tensor = batch["action"].to(DEVICE).long()  # (B,)
+            rewards_batch = batch["reward"].to(DEVICE).float()  # (B,)
+            next_states_batch = batch["next_state"].to(DEVICE)  # (B, 4, N_RAYS)
+            dones_batch = batch["done"].to(DEVICE).float()  # (B,)
 
             # --- DDQN target ---
             with torch.no_grad():
-                next_actions = torch.argmax(q_network(next_states_batch), dim=1, keepdim=True)   # (B,1)
+                next_actions = torch.argmax(q_network(next_states_batch), dim=1, keepdim=True)  # (B,1)
                 next_q_target = target_q_network(next_states_batch).gather(1, next_actions).squeeze(1)  # (B,)
                 target_q_values = rewards_batch + Params.GAMMA * next_q_target * (1.0 - dones_batch)
 
@@ -240,9 +259,9 @@ def training_loop():
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
         if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
             target_q_network.load_state_dict(q_network.state_dict())
-        
+
         if training_step % 100 == 0:
-            losses.append(np.mean(cumulative_loss/100))
+            losses.append(np.mean(cumulative_loss / 100))
             cumulative_loss = 0
 
         # Curriculum Learning basé sur le nombre total d'épisodes terminés
@@ -252,16 +271,17 @@ def training_loop():
     log_f.close()
     # --- 4. Évaluation Finale ---
     results["average_reward"] = cumulative_rewards_avg
-    results["first_loss"] = losses[160:320]
-    results["last_loss"] = losses[550:1200]
+    results["first_loss"] = losses[160:320] if len(losses) > 320 else []
+    results["last_loss"] = losses[550:1200] if len(losses) > 1200 else []
     return q_network, results
+
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
 
 def save_agent(q_network, filename="ddqn_q_network.pt"):
     """
     Sauvegarde les poids (state_dict) du Q-Network dans un fichier .pt.
-    
+
     Args:
         q_network (torch.nn.Module): Le réseau à sauvegarder (le réseau d'apprentissage).
         filename (str): Le nom du fichier de sortie.
@@ -272,11 +292,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
         print(f"\nModèle Q-Network sauvegardé avec succès dans: {filename}")
     except Exception as e:
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
-
-# Global Target Pos est la destination finale du parcours test (e.g., [4.0, 1.0])
-# GLOBAL_TARGET_POS = np.array([4.0, 1.0]) 
-# eval_rewards, avg_reward = evaluate_agent(q_network, env, GLOBAL_TARGET_POS, num_eval_episodes=5)
-# print(f"Average reward during evaluation: {avg_reward:.2f}")
 
 
 if __name__ == "__main__":

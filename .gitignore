@@ -11,3 +11,5 @@ __pycache__/
 ddqn_q_network.pt
 
 logs/
+
+results/
