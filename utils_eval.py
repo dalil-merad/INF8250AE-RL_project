@@ -11,6 +11,8 @@ from environment.path_planning import PathPlanningScenario
 from vmas import make_env
 from environment.map_layouts import MAP_LAYOUTS
 
+ACTION_MOUVEMENT_DETAILS = {0: "Haut", 1: "Bas", 2:"Gauche", 3:"Droite", 4:"Haut-Gauche", 5:"Haut-Droit", 6:"Bas-Gauche", 7:"Bas-Droit"}
+
 def generate_plots(results):
     """
     :param results: Dict with the results needed for the plots
@@ -23,11 +25,9 @@ def generate_plots(results):
     if results["first_loss"]:
         loss_plot(results["first_loss"], output_path, "first")
     if results["last_loss"]:
-        print("last loss")
-        print(results["last_loss"])
         loss_plot(results["last_loss"], output_path, "end")
-    if results["eval_reward"]:
-        eval_reward(results["eval_reward"], output_path)
+    #if results["eval_reward"]:
+    #    eval_reward(results["eval_reward"], output_path)
 
 def eval_reward(rewards, path):
     """
@@ -265,7 +265,7 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
 
     # Utilise imshow
     image = ax.imshow(plot_grid, cmap=cmap, norm=norm)
-    if agent_path :
+    if agent_path is not None :
         ax.plot(agent_path[1], agent_path[0], color='purple', linestyle='-.', linewidth=1)
     
     # Paramètres d'affichage (grille et tics)
@@ -301,10 +301,9 @@ def eval_path_agent(newtork_weight):
     map_data = MAP_LAYOUTS[map_number]
     start_pos = (int(remapper_valeur(-start_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(start_pos[0], -2.8, 2.8, 0, 28)))
     goal_pos = (int(remapper_valeur(-goal_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(goal_pos[0], -2.8, 2.8, 0, 28)))
-    plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    plt.figure()
-    plt.plot(robot_path[0], robot_path[1])
-    plt.show()
+    robot_path = np.array(robot_path)
+    map_path = np.array([remapper_valeur(-robot_path[1], -1.8, 1.8, 0, 18),remapper_valeur(robot_path[0], -2.8, 2.8, 0, 28)])
+    plot_map_with_path(map_data, start_pos, goal_pos, map_path)
 
 def remapper_valeur(valeur, v_min, v_max, t_min, t_max):
     if v_max == v_min:
@@ -322,9 +321,9 @@ def path_agent(checkpoint_path):
     #charger le réseau
     CNN_INPUT_CHANNELS = 2
     ACTION_SIZE = 8
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    DEVICE = torch.device("cpu")
     q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
-    weight_dict = torch.load(checkpoint_path)
+    weight_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=True)
     q_network.load_state_dict(weight_dict)
     q_network.eval()
 
@@ -357,6 +356,7 @@ def path_agent(checkpoint_path):
             with torch.no_grad():
                 q_values = q_network(state_tensor)
                 action = torch.argmax(q_values).unsqueeze(-1)
+            details = ACTION_MOUVEMENT_DETAILS.get(action.item())
             next_state, _, done, info = env.step([action])
             next_state = None if done else next_state
             if next_state:
@@ -415,7 +415,7 @@ if __name__ == "__main__":
     #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    eval_path_agent("ddqn_q_network.pt")
+    eval_path_agent("test_ddqn.pt")
 
 """
 results = {}

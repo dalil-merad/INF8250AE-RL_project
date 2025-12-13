@@ -91,6 +91,7 @@ class PathPlanningScenario(BaseScenario):
         world.add_landmark(self.goal)
         
         self.local_target = torch.zeros((batch_dim, 2), device=device)
+        self.prev_dist_to_goal = torch.zeros( batch_dim, dtype=torch.float32, device=device)
 
         # 4. Moving Obstacles (Distractors)
         # We create them as Agents so they can move, but we will script their motion.
@@ -490,7 +491,8 @@ class PathPlanningScenario(BaseScenario):
                     initial_local_target = temp_goal_pos
                     
                 self.local_target[i] = initial_local_target.squeeze(0)
-
+                new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
+                self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
                 placed = True
 
             if not placed:
@@ -579,10 +581,11 @@ class PathPlanningScenario(BaseScenario):
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
         is_at_goal = dist < 0.05
 
-        #Distance to local goal
-        dist_local = torch.linalg.norm(agent.state.pos - self.local_target, dim=-1)
-        local_dist_penalty = -0.01 * dist_local
-        
+        progress = self.prev_dist_to_goal - dist
+        # Utiliser une échelle de 0.1 pour que le progrès ait un impact significatif, mais reste inférieur à +1.0 (Succès).
+        PROGRESS_REWARD_SCALE = 0.1 # À définir dans Params.py
+        progress_reward = PROGRESS_REWARD_SCALE * progress
+
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for entity in self.world.agents + self.world.landmarks:
@@ -590,11 +593,12 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 1.0
-        rews[is_collision] -= 1.0
+        rews[is_at_goal] += 5.0
+        rews[is_collision] -= 5.0
         rews += -0.01 # Time penalty
-        rews += local_dist_penalty
+        rews += progress_reward
 
+        self.prev_dist_to_goal = dist.clone().detach()
         self.local_target = self._get_goal_proxy_pos(agent)
         
         return rews
@@ -626,7 +630,7 @@ class PathPlanningScenario(BaseScenario):
         device = self.world.device
 
         # --- 1. Lidar Mesures (360 éléments) ---
-        lidar_distances = agent.sensors[0].measure() # (B, 360)
+        lidar_distances = agent.sensors[0].measure()/self.lidar_range # (B, 360)
 
         # Création des angles (0-360)
         angle_vector = torch.linspace(start=0, end=360, steps=self.n_lidar_rays, device=device).unsqueeze(0)
@@ -642,7 +646,7 @@ class PathPlanningScenario(BaseScenario):
         intersection_point = target_pos - agent.state.pos
 
         # 40 copies de (dX, dY) -> 80 éléments (B, 80)
-        local_target_vector = intersection_point.repeat(1, 40)#delta_pos.repeat(1, 40) 
+        local_target_vector = delta_pos.repeat(1, 40)
         # Total éléments: B * 80.
         local_target_input_reshaped = local_target_vector.reshape(batch_dim, 2, 2, 20)
 
@@ -672,8 +676,6 @@ class PathPlanningScenario(BaseScenario):
         self._max_dist = max_dist
         if self.debug:
             print(f"[Scenario] Set spawn max_dist to: {self._max_dist}")
-
-    # À ajouter dans la classe PathPlanningScenario
 
     def _get_goal_proxy_pos(self, agent: Agent):
         """

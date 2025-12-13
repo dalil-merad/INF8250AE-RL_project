@@ -36,7 +36,7 @@ def training_loop():
         continuous_actions=False,
         max_steps=Params.MAX_STEPS_PER_EPISODE,
         device=DEVICE, 
-        seed=0,
+        #seed=0,
         dict_spaces=True,
         multidiscrete_actions=True,  # <- tell VMAS we use MultiDiscrete
     ) 
@@ -48,7 +48,8 @@ def training_loop():
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
 
     # Autres initialisations
-    optimizer = optim.Adam(q_network.parameters(), lr=Params.LEARNING_RATE)
+    learning_rate = Params.LEARNING_RATE_START
+    optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
     criterion = nn.MSELoss()
 
     # Utiliser le replay buffer de torchrl
@@ -82,7 +83,7 @@ def training_loop():
 
     log_f = open("training_log.csv", mode="w", newline="")
     log_writer = csv.writer(log_f)
-    log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn"])
+    log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn", "train_step"])
     current_loss = 0.0
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
     pbar = tqdm(total=Params.NUM_EPISODES)
@@ -160,9 +161,10 @@ def training_loop():
             # Logging
             if total_episodes % LOG_EVERY_N_EPISODES == 0:
                 avg_r = sum(rewards_per_episode) / len(rewards_per_episode) if rewards_per_episode else 0
-                print('\r\033[2K\033[1G', end="", flush=True)
+                print('\r', end="", flush=True)
                 print(
-                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} | Eps: {epsilon:.2f} | L: {max_dist_L:.2f}")
+                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} " 
+                    + f"| Eps: {epsilon:.2f} | L: {max_dist_L:.2f} | Tstep:{training_step}")
 
                 log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon, max_dist_L])
                 log_f.flush()
@@ -232,6 +234,11 @@ def training_loop():
 
             # Mise à jour Epsilon (par batch d'entraînement)
             epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
+            
+            # Mise à jour Learning rate (par batch d'entraînement)
+            learning_rate = max(Params.LEARNING_RATE_MIN, learning_rate * Params.LEARNING_DECAY)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = learning_rate
 
             # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
             samples_since_last_train = 0
@@ -240,6 +247,7 @@ def training_loop():
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
         if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
             target_q_network.load_state_dict(q_network.state_dict())
+            torch.save(q_network.state_dict(), "test_ddqn.pt")
         
         if training_step % 100 == 0:
             losses.append(np.mean(cumulative_loss/100))
