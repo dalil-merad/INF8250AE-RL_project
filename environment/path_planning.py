@@ -473,7 +473,7 @@ class PathPlanningScenario(BaseScenario):
                 # Placement successful
                 self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
                 self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
-                
+
                 new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
                 self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
                 placed = True
@@ -562,13 +562,15 @@ class PathPlanningScenario(BaseScenario):
         
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
-        is_at_goal = dist < 0.05
+        is_at_goal = dist < 0.11
+        epsilon = 1e-6
 
-        progress = self.prev_dist_to_goal - dist
+        progress = (self.prev_dist_to_goal - dist)
         # Utiliser une échelle de 0.1 pour que le progrès ait un impact significatif, mais reste inférieur à +1.0 (Succès).
-        PROGRESS_REWARD_SCALE = 1.0 # À définir dans Params.py
-        progress_reward = PROGRESS_REWARD_SCALE * progress
-
+        #PROGRESS_REWARD_SCALE = 2 # À définir dans Params.py
+        #progress_reward = PROGRESS_REWARD_SCALE * progress
+        decreased = progress >= 0
+        increased = progress < 0
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for entity in self.world.agents + self.world.landmarks:
@@ -577,9 +579,10 @@ class PathPlanningScenario(BaseScenario):
 
         rews = torch.zeros_like(dist)
         rews[is_at_goal] += 5.0
-        rews[is_collision] -= 5.0
+        rews[is_collision] -= 10.0
+        rews[decreased] += 0.5
+        rews[increased] -= 0.5
         rews += -0.01 # Time penalty
-        rews += progress_reward
 
         self.prev_dist_to_goal = dist.clone().detach()        
         return rews
@@ -594,7 +597,7 @@ class PathPlanningScenario(BaseScenario):
         """
         # Distance to goal
         dist = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
-        reached_goal = dist < 0.05  # same threshold as in reward
+        reached_goal = dist < 0.11  # same threshold as in reward
 
         # Collision with any collidable entity
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)

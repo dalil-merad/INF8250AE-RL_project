@@ -9,7 +9,7 @@ class Params:
     # Taux d'apprentissage initial de l'optimiseur Adam
     LEARNING_RATE_MIN = 0.00001
     #Taux de décroissance du learning rate
-    LEARNING_DECAY = 1
+    LEARNING_DECAY = 0.9999
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
@@ -17,12 +17,12 @@ class Params:
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
-    EPSILON_DECAY = 0.9995  
+    EPSILON_DECAY = 0.9999  
 
     # Paramètres du Replay Buffer [cite: 262, 266]
     REPLAY_BUFFER_CAPACITY = 40000
     BATCH_SIZE = 32
-    TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
+    TRAINING_START_STEPS = 35000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
@@ -37,6 +37,6 @@ class Params:
     # Ces valeurs doivent être ajustées selon l'expérience. Ici, une suggestion:
     L_MIN = 0.2  # Distance de départ min (en m)
     L_MAX = 2.0  # Distance de départ max
-    N1_THRESHOLD = 2*NUM_EPISODES/8  # Étape 1: Maintient L_MIN
+    N1_THRESHOLD = 1*NUM_EPISODES/8  # Étape 1: Maintient L_MIN
     N2_THRESHOLD = 6*NUM_EPISODES/8 # Étape 2: Atteint L_MAX (n_steps total)
     M_SEARCH_SPEED = (L_MAX - L_MIN) / (N2_THRESHOLD - N1_THRESHOLD)

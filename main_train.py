@@ -247,9 +247,11 @@ def training_loop():
             target_q_network.load_state_dict(q_network.state_dict())
         
         if training_step % 100 == 0:
-            torch.save(q_network.state_dict(), "test_ddqn.pt")
             losses.append(np.mean(cumulative_loss/100))
             cumulative_loss = 0
+
+        if training_step % 50 == 0:
+            torch.save(q_network.state_dict(), "test_ddqn.pt")
 
         # Curriculum Learning basé sur le nombre total d'épisodes terminés
         max_dist_L = update_L(total_episodes)
@@ -258,8 +260,7 @@ def training_loop():
     log_f.close()
     # --- 4. Évaluation Finale ---
     results["average_reward"] = cumulative_rewards_avg
-    results["first_loss"] = losses[160:320]
-    results["last_loss"] = losses[550:1200]
+    results["loss"] = losses
     return q_network, results
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
@@ -278,12 +279,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
         print(f"\nModèle Q-Network sauvegardé avec succès dans: {filename}")
     except Exception as e:
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
-
-# Global Target Pos est la destination finale du parcours test (e.g., [4.0, 1.0])
-# GLOBAL_TARGET_POS = np.array([4.0, 1.0]) 
-# eval_rewards, avg_reward = evaluate_agent(q_network, env, GLOBAL_TARGET_POS, num_eval_episodes=5)
-# print(f"Average reward during evaluation: {avg_reward:.2f}")
-
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné

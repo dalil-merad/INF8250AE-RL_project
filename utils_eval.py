@@ -22,10 +22,10 @@ def generate_plots(results):
         os.makedirs(output_path)
     if results["average_reward"]:
         average_cumulutativ_reward(results["average_reward"], output_path)
-    if results["first_loss"]:
-        loss_plot(results["first_loss"], output_path, "first")
-    if results["last_loss"]:
-        loss_plot(results["last_loss"], output_path, "end")
+    if results["loss"]:
+        l = len(results["loss"])
+        loss_plot(results["first_loss"][int(l/8):int(2*l/8)], output_path, "first")
+        loss_plot(results["first_loss"][int(6*l/8):int(l)-1], output_path, "end")
     #if results["eval_reward"]:
     #    eval_reward(results["eval_reward"], output_path)
 
@@ -266,7 +266,7 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
     # Utilise imshow
     image = ax.imshow(plot_grid, cmap=cmap, norm=norm)
     if agent_path is not None :
-        ax.plot(agent_path[1], agent_path[0], color='purple', linestyle='-.', linewidth=1)
+        ax.plot(agent_path[1], agent_path[0], color='purple', linestyle='-', linewidth=1)
     
     # Paramètres d'affichage (grille et tics)
     # Positionne les tics mineurs entre les cellules (à N.5)
@@ -342,7 +342,7 @@ def path_agent(checkpoint_path):
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(2.0)
+    env.scenario.set_max_dist(4.0)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
