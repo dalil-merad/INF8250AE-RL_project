@@ -17,15 +17,15 @@ def generate_plots(results):
     """
     :param results: Dict with the results needed for the plots
     """
-    output_path = 'results/'+datetime.datetime.now().strftime('%y%m%d-%H%M%S')+'/'
+    output_path = 'results/'+datetime.datetime.now().strftime('%y-%m-%d_%H:%M:%S')+'/'
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     if results["average_reward"]:
         average_cumulutativ_reward(results["average_reward"], output_path)
     if results["loss"]:
         l = len(results["loss"])
-        loss_plot(results["first_loss"][int(l/8):int(2*l/8)], output_path, "first")
-        loss_plot(results["first_loss"][int(6*l/8):int(l)-1], output_path, "end")
+        loss_plot(results["loss"][int(l/8):int(2*l/8)], output_path, "first")
+        loss_plot(results["loss"][int(6*l/8):int(l)-1], output_path, "end")
     #if results["eval_reward"]:
     #    eval_reward(results["eval_reward"], output_path)
 
@@ -415,7 +415,7 @@ if __name__ == "__main__":
     #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    eval_path_agent("ddqn_q_network.pt")
+    eval_path_agent("ddqn_q_network_test3.pt")
 
 """
 results = {}

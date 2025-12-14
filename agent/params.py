@@ -13,7 +13,7 @@ class Params:
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
-    EPSILON_START = 0.2
+    EPSILON_START = 0.9
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
@@ -22,7 +22,7 @@ class Params:
     # Paramètres du Replay Buffer [cite: 262, 266]
     REPLAY_BUFFER_CAPACITY = 150000  # Capacité maximale du buffer
     BATCH_SIZE = 32
-    TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
+    TRAINING_START_STEPS = 5000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
