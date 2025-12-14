@@ -18,7 +18,7 @@ ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 128  #1024
+NUM_ENVS = 1024  #1024
 
 # Optionnel: rendu pendant l'entraînement
 RENDER_DURING_TRAINING = False       # passez à True pour activer
@@ -27,7 +27,7 @@ RENDER_NUM_STEPS = 5                # nombre de steps consécutifs à rendre apr
 
 LOG_EVERY_N_EPISODES = 20  # Fréquence de logging des statistiques
 
-def training_loop():
+def training_loop(resume_from: str | None = None):
     global current_step, epsilon
     # Initialisation de l'environnement VMAS (PathPlanningScenario)
     env = make_env(
@@ -44,7 +44,15 @@ def training_loop():
     # Initialisation des réseaux (CNN)
     q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
     target_q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
-    target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
+
+    # --- NEW: optionally resume from saved weights ---
+    if resume_from is not None:
+        state_dict = torch.load(resume_from, map_location=DEVICE)
+        q_network.load_state_dict(state_dict)
+        target_q_network.load_state_dict(state_dict)
+    else:
+        target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
+
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
 
     # Autres initialisations
@@ -282,6 +290,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
-    trained_network, results = training_loop()
-    save_agent(trained_network, filename="ddqn_q_network.pt")
+    trained_network, results = training_loop(resume_from='ddqn_q_network.pt')
+    save_agent(trained_network, filename="ddqn_q_network_test2.pt")
     generate_plots(results=results)

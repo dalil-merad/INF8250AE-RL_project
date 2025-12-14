@@ -13,14 +13,14 @@ class Params:
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
-    EPSILON_START = 1.0
+    EPSILON_START = 0.2
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
-    EPSILON_DECAY = 0.9999  
+    EPSILON_DECAY = 0.98  
 
     # Paramètres du Replay Buffer [cite: 262, 266]
-    REPLAY_BUFFER_CAPACITY = 80000
+    REPLAY_BUFFER_CAPACITY = 150000  # Capacité maximale du buffer
     BATCH_SIZE = 32
     TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
@@ -35,8 +35,8 @@ class Params:
 
     # Paramètres du Curriculum Learning (Distance L) [cite: 135-139]
     # Ces valeurs doivent être ajustées selon l'expérience. Ici, une suggestion:
-    L_MIN = 0.2  # Distance de départ min (en m)
+    L_MIN = 0.15  # Distance de départ min (en m)
     L_MAX = 2.0  # Distance de départ max
     N1_THRESHOLD = 1*NUM_EPISODES/8  # Étape 1: Maintient L_MIN
-    N2_THRESHOLD = 6*NUM_EPISODES/8 # Étape 2: Atteint L_MAX (n_steps total)
+    N2_THRESHOLD = 99*NUM_EPISODES/100 # Étape 2: Atteint L_MAX (n_steps total)
     M_SEARCH_SPEED = (L_MAX - L_MIN) / (N2_THRESHOLD - N1_THRESHOLD)
