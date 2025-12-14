@@ -8,11 +8,6 @@ from vmas.simulator.dynamics.common import Dynamics
 from agent.params import Params
 
 
-TIMESTEP_REWARD = -1.0
-GOAL_REWARD = 100.0
-COLLISION_REWARD = -100.0
-
-
 class KinematicDynamics(Dynamics):
     @property
     def needed_action_size(self) -> int:
@@ -26,7 +21,7 @@ class PathPlanningScenario(BaseScenario):
         super().__init__()
         self.lidar_range = Params.LIDAR_RANGE  # Lidar max range
         self.n_lidar_rays = Params.N_LIDAR_RAYS  # Number of Lidar rays
-        self.world_size = 2.0  # World is a square from -2 to 2
+        self.world_size = Params.WORLD_SIZE  # World is a square from -2 to 2
         self.agent_radius = Params.AGENT_RADIUS  # Agent radius
         self.goal_radius = Params.GOAL_RADIUS  # Goal radius
 
@@ -51,7 +46,7 @@ class PathPlanningScenario(BaseScenario):
                 world,
                 n_rays=self.n_lidar_rays,
                 max_range=self.lidar_range,
-                entity_filter=lambda e: e.name.startswith("wall"),
+                entity_filter=lambda e: e.collide,
                 render=True,
             )],
         )
@@ -66,26 +61,56 @@ class PathPlanningScenario(BaseScenario):
         )
         world.add_landmark(self.goal)
 
-        # ----- Create Borders (Walls) -----
+        # obstacle walls
         self.walls = []
-        wall_configs = [
-            (0, self.world_size, 2 * self.world_size, 0.1),   # Top
-            (0, -self.world_size, 2 * self.world_size, 0.1),  # Bottom
-            (-self.world_size, 0, 0.1, 2 * self.world_size),  # Left
-            (self.world_size, 0, 0.1, 2 * self.world_size)    # Right
-        ]
 
-        for i, (x, y, l, w) in enumerate(wall_configs):
-            wall = Landmark(
-                name=f"wall_{i}",
-                shape=Box(length=l, width=w),
-                color=Color.RED,
-                collide=True
+        # World borders (collidable)
+        self.border_segments = []
+        # We'll create 4 thin rectangles for the border with fixed dimensions
+        border_thickness = 0.02
+
+        # Horizontal borders (top/bottom) - length matches map width
+        for i in range(2):
+            border = Landmark(
+                name=f"border_h_{i}",
+                shape=Box(length=(2 * self.world_size + 0.2), width=border_thickness),
+                color=Color.BLACK,
+                collide=True,
             )
-            # Set positions immediately
-            world.add_landmark(wall)
-            wall.set_pos(torch.tensor([x, y], device=device).unsqueeze(0).repeat(batch_dim, 1), batch_index=None)
-            self.walls.append(wall)
+            world.add_landmark(border)
+            self.border_segments.append(border)
+
+        for i in range(2):
+            border = Landmark(
+                name=f"border_v_{i}",
+                shape=Box(length=(2 * self.world_size + 0.2), width=border_thickness),
+                color=Color.BLACK,
+                collide=True,
+            )
+            world.add_landmark(border)
+            self.border_segments.append(border)
+
+        # # ----- Create Borders (Walls) -----
+        # self.walls = []
+        # # (x, y, length, width)
+        # wall_configs = [
+        #     (-self.world_size, -self.world_size, 2 * self.world_size, 0.1),   # Top
+        #     (-self.world_size, self.world_size, 2 * self.world_size, 0.1),  # Bottom
+        #     (-self.world_size, -self.world_size, 0.1, 2 * self.world_size),  # Left
+        #     (self.world_size, -self.world_size, 0.1, 2 * self.world_size)    # Right
+        # ]
+        #
+        # for i, (x, y, l, w) in enumerate(wall_configs):
+        #     wall = Landmark(
+        #         name=f"wall_{i}",
+        #         shape=Box(length=l, width=w),
+        #         color=Color.RED,
+        #         collide=True
+        #     )
+        #     # Set positions immediately
+        #     world.add_landmark(wall)
+        #     wall.set_pos(torch.tensor([x, y], device=device).unsqueeze(0).repeat(batch_dim, 1), batch_index=None)
+        #     self.walls.append(wall)
 
         return world
 
@@ -109,6 +134,7 @@ class PathPlanningScenario(BaseScenario):
 
             self.agent.set_pos(random_agent_pos, batch_index=None)
             self.agent.set_vel(torch.zeros((batch_size, 2), device=self.world.device), batch_index=None)
+
         else:
             random_goal_pos = (torch.rand((1, 2), device=self.world.device) * 2 * limit) - limit
             self.goal.set_pos(random_goal_pos, batch_index=env_index)
@@ -123,18 +149,45 @@ class PathPlanningScenario(BaseScenario):
             self.agent.set_pos(random_agent_pos, batch_index=env_index)
             self.agent.set_vel(torch.zeros((1, 2), device=self.world.device), batch_index=env_index)
 
+        self.border_segments[0].set_pos(
+            torch.tensor([0.0, self.world_size + .1], device=self.world.device),
+            batch_index=env_index
+        )
+        self.border_segments[0].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=env_index)
+
+        # Bottom border
+        self.border_segments[1].set_pos(
+            torch.tensor([0.0, -self.world_size - .1], device=self.world.device),
+            batch_index=env_index
+        )
+        self.border_segments[1].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=env_index)
+
+        # Left border
+        self.border_segments[2].set_pos(
+            torch.tensor([-self.world_size - .1, 0.0], device=self.world.device),
+            batch_index=env_index
+        )
+        self.border_segments[2].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=env_index)
+
+        # Right border
+        self.border_segments[3].set_pos(
+            torch.tensor([self.world_size + .1, 0.0], device=self.world.device),
+            batch_index=env_index
+        )
+        self.border_segments[3].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=env_index)
+
     def reward(self, agent: Agent):
-        step_reward = torch.full((self.world.batch_dim,), TIMESTEP_REWARD, device=self.world.device)
+        step_reward = torch.full((self.world.batch_dim,), Params.TIMESTEP_REWARD, device=self.world.device)
 
         dist_to_goal = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
         at_goal = dist_to_goal < (self.agent_radius + self.goal_radius)
-        step_reward[at_goal] += GOAL_REWARD
+        step_reward[at_goal] += Params.GOAL_REWARD
 
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for wall in self.walls:
             is_collision |= self.world.is_overlapping(agent, wall)
 
-        step_reward[is_collision] += COLLISION_REWARD
+        step_reward[is_collision] += Params.COLLISION_REWARD
         return step_reward
 
     def done(self):

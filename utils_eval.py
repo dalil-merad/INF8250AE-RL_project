@@ -11,11 +11,10 @@ from environment.path_planning import PathPlanningScenario
 from vmas import make_env
 from environment.map_layouts import MAP_LAYOUTS
 
-def generate_plots(results):
+def generate_plots(results, output_path):
     """
     :param results: Dict with the results needed for the plots
     """
-    output_path = 'results/'+datetime.datetime.now().strftime('%y%m%d-%H%M%S')+'/'
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     if results.get("average_reward", None):
@@ -26,6 +25,8 @@ def generate_plots(results):
         print("last loss")
         print(results["last_loss"])
         loss_plot(results["last_loss"], output_path, "end")
+    if results.get("losses", None):
+        loss_plot(results["losses"], output_path, "all")
     if results.get("eval_reward", None):
         eval_reward(results["eval_reward"], output_path)
 
@@ -299,7 +300,7 @@ def eval_path_agent(newtork_weight):
     map_data = MAP_LAYOUTS[map_number]
     start_pos = (int(remapper_valeur(-start_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(start_pos[0], -2.8, 2.8, 0, 28)))
     goal_pos = (int(remapper_valeur(-goal_pos[1], -1.8, 1.8, 0, 18)), int(remapper_valeur(goal_pos[0], -2.8, 2.8, 0, 28)))
-    # plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
+    plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
     plt.figure()
     plt.plot(robot_path[0], robot_path[1])
     plt.show()
@@ -345,7 +346,7 @@ def path_agent(checkpoint_path):
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
-    # map_number = env.scenario.map_choice
+    map_number = env.scenario.map_choice
     goal = env.scenario.goal.state.pos[0].tolist()
     start = env.agents[0].state.pos.tolist()
     start = start[0]
@@ -370,7 +371,6 @@ def path_agent(checkpoint_path):
                     env.render(env_index=0, mode="human")
                     render_steps_remaining -= 1
 
-            print(info["robot"])
             pos = info["robot"][0].tolist()
             pos_x, pos_y = pos[0], pos[1]
             path_X.append(pos_x)
@@ -378,7 +378,7 @@ def path_agent(checkpoint_path):
             step += 1
 
     path = [path_X, path_Y]
-    return start, goal, path  # , map_number
+    return start, goal, path, map_number
 
 
 if __name__ == "__main__":

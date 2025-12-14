@@ -46,7 +46,8 @@ class QNetwork(nn.Module):
 
             if self.flat_size == 0 and self.n_rays == 0:
                 print(
-                    "WARNING: n_rays is 0. The network input is empty. The agent is blind and will rely solely on bias.")
+                    "WARNING: n_rays is 0. The network input is empty. "
+                    "The agent is blind and will rely solely on bias.")
 
         self.fc1 = nn.Linear(self.flat_size, 256)
         self.fc2 = nn.Linear(256, action_size)

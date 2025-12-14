@@ -12,9 +12,8 @@ from tqdm import tqdm
 import csv
 import numpy as np
 from utils_eval import generate_plots
+import datetime
 
-CNN_INPUT_CHANNELS = 4
-ACTION_SIZE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
@@ -26,6 +25,8 @@ RENDER_EVERY_N_STEPS = 10  # tous les N steps globaux, on déclenche une fenêtr
 RENDER_NUM_STEPS = 5  # nombre de steps consécutifs à rendre après déclenchement
 
 LOG_EVERY_N_EPISODES = 20  # Fréquence de logging des statistiques
+
+output_path = 'results/' + datetime.datetime.now().strftime('%y%m%d-%H%M%S') + '/'
 
 
 def training_loop():
@@ -43,8 +44,8 @@ def training_loop():
     )
 
     # Initialisation des réseaux (CNN)
-    q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
-    target_q_network = QNetwork(state_size=CNN_INPUT_CHANNELS, action_size=ACTION_SIZE).to(DEVICE)
+    q_network = QNetwork(state_size=Params.CNN_INPUT_CHANNELS, action_size=Params.ACTION_SIZE).to(DEVICE)
+    target_q_network = QNetwork(state_size=Params.CNN_INPUT_CHANNELS, action_size=Params.ACTION_SIZE).to(DEVICE)
     target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
     q_network.train()
@@ -87,7 +88,7 @@ def training_loop():
 
     total_reward = torch.zeros(NUM_ENVS, dtype=torch.float32, device=DEVICE)
 
-    log_f = open("training_log.csv", mode="w", newline="")
+    log_f = open(output_path + "training_log.csv", mode="w", newline="")
     log_writer = csv.writer(log_f)
     log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn"])
     current_loss = 0.0
@@ -107,7 +108,7 @@ def training_loop():
 
             is_explore = torch.rand(NUM_ENVS, device=DEVICE) < epsilon
             random_actions_indices = torch.randint(
-                low=0, high=ACTION_SIZE, size=(NUM_ENVS,), device=DEVICE
+                low=0, high=Params.ACTION_SIZE, size=(NUM_ENVS,), device=DEVICE
             )
             action_indices = torch.where(is_explore, random_actions_indices, exploitative_actions)
 
@@ -271,14 +272,15 @@ def training_loop():
     log_f.close()
     # --- 4. Évaluation Finale ---
     results["average_reward"] = cumulative_rewards_avg
-    results["first_loss"] = losses[160:320] if len(losses) > 320 else []
-    results["last_loss"] = losses[550:1200] if len(losses) > 1200 else []
+    results["first_loss"] = losses[160:320]
+    results["last_loss"] = losses[550:1200]
+    results["losses"] = losses
     return q_network, results
 
 
 # [Optionnel: logique d'affichage des récompenses dans rewards_per_episode]
 
-def save_agent(q_network, filename="ddqn_q_network.pt"):
+def save_agent(q_network, out_path, filename="ddqn_q_network.pt"):
     """
     Sauvegarde les poids (state_dict) du Q-Network dans un fichier .pt.
 
@@ -288,7 +290,7 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
     """
     try:
         # On sauvegarde uniquement l'état du modèle (les poids)
-        torch.save(q_network.state_dict(), filename)
+        torch.save(q_network.state_dict(), out_path + filename)
         print(f"\nModèle Q-Network sauvegardé avec succès dans: {filename}")
     except Exception as e:
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
@@ -297,5 +299,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
     trained_network, results = training_loop()
-    save_agent(trained_network, filename="ddqn_q_network.pt")
-    generate_plots(results=results)
+    save_agent(trained_network, out_path=output_path, filename="ddqn_q_network.pt")
+    generate_plots(results=results, output_path=output_path)
+    print(results.keys())
