@@ -5,11 +5,11 @@ class Params:
     """
     # --- 1. Hyperparamètres (basés sur le rapport et les pratiques RL) ---
     # Taux d'apprentissage initial de l'optimiseur Adam
-    LEARNING_RATE_START = 0.001
+    LEARNING_RATE_START = 0.0001
     # Taux d'apprentissage initial de l'optimiseur Adam
-    LEARNING_RATE_MIN = 0.0005
+    LEARNING_RATE_MIN = 0.00001
     #Taux de décroissance du learning rate
-    LEARNING_DECAY = 0.9999
+    LEARNING_DECAY = 1
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
@@ -22,9 +22,9 @@ class Params:
     # Paramètres du Replay Buffer [cite: 262, 266]
     REPLAY_BUFFER_CAPACITY = 40000
     BATCH_SIZE = 32
-    TRAINING_START_STEPS = 5000  # Remplissage du buffer avant l'entraînement [cite: 264]
+    TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
-    TARGET_UPDATE_FREQUENCY = 200  # Mise à jour du réseau cible tous les C pas
+    TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
     # Paramètres de l'environnement
     CNN_INPUT_CHANNELS = 2 # 2 canaux (Angle, Distance) pour l'entrée 20x20x2
@@ -37,6 +37,6 @@ class Params:
     # Ces valeurs doivent être ajustées selon l'expérience. Ici, une suggestion:
     L_MIN = 0.2  # Distance de départ min (en m)
     L_MAX = 2.0  # Distance de départ max
-    N1_THRESHOLD = NUM_EPISODES/18  # Étape 1: Maintient L_MIN
+    N1_THRESHOLD = 2*NUM_EPISODES/8  # Étape 1: Maintient L_MIN
     N2_THRESHOLD = 6*NUM_EPISODES/8 # Étape 2: Atteint L_MAX (n_steps total)
     M_SEARCH_SPEED = (L_MAX - L_MIN) / (N2_THRESHOLD - N1_THRESHOLD)

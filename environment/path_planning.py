@@ -89,8 +89,6 @@ class PathPlanningScenario(BaseScenario):
             collide=False
         )
         world.add_landmark(self.goal)
-        
-        self.local_target = torch.zeros((batch_dim, 2), device=device)
         self.prev_dist_to_goal = torch.zeros( batch_dim, dtype=torch.float32, device=device)
 
         # 4. Moving Obstacles (Distractors)
@@ -475,22 +473,7 @@ class PathPlanningScenario(BaseScenario):
                 # Placement successful
                 self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
                 self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
-
-                temp_agent_pos = self.agent.state.pos[i].unsqueeze(0)
-                temp_goal_pos = self.goal.state.pos[i].unsqueeze(0)
                 
-                R = 2.0 
-                D_temp = temp_goal_pos - temp_agent_pos
-                norm_D_temp = torch.linalg.norm(D_temp, dim=-1, keepdim=True)
-                
-                # Logique simplifiée car c'est juste un initialisation
-                if norm_D_temp.item() > R:
-                    alpha_temp = R / norm_D_temp
-                    initial_local_target = temp_agent_pos + alpha_temp * D_temp
-                else:
-                    initial_local_target = temp_goal_pos
-                    
-                self.local_target[i] = initial_local_target.squeeze(0)
                 new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
                 self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
                 placed = True
@@ -583,7 +566,7 @@ class PathPlanningScenario(BaseScenario):
 
         progress = self.prev_dist_to_goal - dist
         # Utiliser une échelle de 0.1 pour que le progrès ait un impact significatif, mais reste inférieur à +1.0 (Succès).
-        PROGRESS_REWARD_SCALE = 0.1 # À définir dans Params.py
+        PROGRESS_REWARD_SCALE = 1.0 # À définir dans Params.py
         progress_reward = PROGRESS_REWARD_SCALE * progress
 
         # Collision Check
@@ -598,9 +581,7 @@ class PathPlanningScenario(BaseScenario):
         rews += -0.01 # Time penalty
         rews += progress_reward
 
-        self.prev_dist_to_goal = dist.clone().detach()
-        self.local_target = self._get_goal_proxy_pos(agent)
-        
+        self.prev_dist_to_goal = dist.clone().detach()        
         return rews
 
     def done(self) -> torch.Tensor:
@@ -633,7 +614,7 @@ class PathPlanningScenario(BaseScenario):
         lidar_distances = agent.sensors[0].measure()/self.lidar_range # (B, 360)
 
         # Création des angles (0-360)
-        angle_vector = torch.linspace(start=0, end=360, steps=self.n_lidar_rays, device=device).unsqueeze(0)
+        angle_vector = torch.linspace(start=0, end=2*np.pi, steps=self.n_lidar_rays, device=device).unsqueeze(0)
         lidar_angles = angle_vector.repeat(batch_dim, 1) # (B, 360)
         # Empilement et Transposition: (B, 360, 2) -> (B, 2, 360)
         lidar_mesures = torch.stack((lidar_distances, lidar_angles), dim=2).transpose(1, 2)
@@ -642,18 +623,16 @@ class PathPlanningScenario(BaseScenario):
         
         # --- 2. Cible Locale (80 éléments) ---
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
-        target_pos = self._get_goal_proxy_pos(agent)
-        intersection_point = target_pos - agent.state.pos
 
         # 40 copies de (dX, dY) -> 80 éléments (B, 80)
-        local_target_vector = delta_pos.repeat(1, 40)
+        target_vector = delta_pos.repeat(1, 40)
         # Total éléments: B * 80.
-        local_target_input_reshaped = local_target_vector.reshape(batch_dim, 2, 2, 20)
+        target_input_reshaped = target_vector.reshape(batch_dim, 2, 2, 20)
 
         # --- 3. Concaténation Finale (B, 2, 20, 20) ---
         # Concaténation sur dim=2 (Hauteur: 18 + 2 = 20)
         raw_input_800 = torch.cat(
-        (lidar_input_reshaped, local_target_input_reshaped), dim=2 )
+        (lidar_input_reshaped, target_input_reshaped), dim=2 )
        
 
         return raw_input_800
