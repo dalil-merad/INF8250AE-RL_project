@@ -8,7 +8,7 @@ from vmas.simulator.dynamics.common import Dynamics
 from agent.params import Params
 
 MAX_STATIC_WALLS = 4  # Maximum number of static walls in the environment
-SIZE_OF_WALLS = 6 / 5  # (* world_size) length of walls
+SIZE_OF_WALLS = 5 / 5  # (* world_size) length of walls
 WALL_COMPLEMENT = (Params.WORLD_SIZE - (SIZE_OF_WALLS * Params.WORLD_SIZE) / 2) / Params.WORLD_SIZE
 
 

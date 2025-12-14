@@ -9,10 +9,37 @@ from agent.ddqn_agent import QNetwork
 from agent.params import Params
 
 # --- CONFIGURATION ---
-MODEL_PATH = "results/251214-145737/ddqn_q_network.pt"
+MODEL_FOLDER = "results/251214-174539/"
+MODEL_PATH = MODEL_FOLDER + "ddqn_q_network.pt"
+HYPERPARAM_PATH = MODEL_FOLDER + "hyperparameters.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_EVAL_EPISODES = 10
 RENDER_DELAY = 0.05
+
+
+def load_hyperparameters(file_path):
+    """
+    Charge les hyperparamètres depuis un fichier texte et les applique à la classe Params.
+
+    Args:
+        file_path (str): Le chemin du fichier contenant les hyperparamètres.
+    """
+    try:
+        with open(file_path, "r") as f:
+            for line in f:
+                key, value = line.strip().split(": ")
+                # Convertir la valeur en float ou int si possible
+                try:
+                    if '.' in value:
+                        value = float(value)
+                    else:
+                        value = int(value)
+                except ValueError:
+                    pass  # Garder comme string si la conversion échoue
+                setattr(Params, key, value)
+        print(f"\nHyperparamètres chargés avec succès depuis: {file_path}")
+    except Exception as e:
+        print(f"\nErreur lors du chargement des hyperparamètres: {e}")
 
 
 # --- CUSTOM SCENARIO FOR VISUALIZATION ---
@@ -180,4 +207,5 @@ def evaluate_visual():
 
 
 if __name__ == "__main__":
+    load_hyperparameters(HYPERPARAM_PATH)
     evaluate_visual()

@@ -29,7 +29,6 @@ LOG_EVERY_N_EPISODES = 20  # Fréquence de logging des statistiques
 
 output_path = 'results/' + datetime.datetime.now().strftime('%y%m%d-%H%M%S') + '/'
 
-
 def training_loop():
     global current_step, epsilon
     # Initialisation de l'environnement VMAS (PathPlanningScenario)
@@ -88,7 +87,6 @@ def training_loop():
         state_tensor = state_tensor.squeeze(0)
 
     total_reward = torch.zeros(NUM_ENVS, dtype=torch.float32, device=DEVICE)
-
     log_f = open(output_path + "training_log.csv", mode="w", newline="")
     log_writer = csv.writer(log_f)
     log_writer.writerow(["episode", "step", "avg_reward", "loss", "epsilon", "L_spawn"])
@@ -297,10 +295,29 @@ def save_agent(q_network, out_path, filename="ddqn_q_network.pt"):
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
 
 
+def save_hyperparameters(out_path, filename="hyperparameters.txt"):
+    """
+    Sauvegarde les hyperparamètres dans un fichier texte.
+
+    Args:
+        out_path (str): Le chemin du répertoire de sortie.
+        filename (str): Le nom du fichier de sortie.
+    """
+    try:
+        with open(out_path + filename, "w") as f:
+            for attr in dir(Params):
+                if not attr.startswith("__") and not callable(getattr(Params, attr)):
+                    f.write(f"{attr}: {getattr(Params, attr)}\n")
+        print(f"\nHyperparamètres sauvegardés avec succès dans: {filename}")
+    except Exception as e:
+        print(f"\nErreur lors de la sauvegarde des hyperparamètres: {e}")
+
+
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+    save_hyperparameters(out_path=output_path, filename="hyperparameters.txt")
     trained_network, results = training_loop()
     save_agent(trained_network, out_path=output_path, filename="ddqn_q_network.pt")
     generate_plots(results=results, output_path=output_path)

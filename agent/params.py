@@ -8,7 +8,7 @@ class Params:
     # Robot
     GOAL_RADIUS = 0.1   # Rayon du but (en m)
     AGENT_RADIUS = 0.1  # Rayon de l'agent (en m)
-    N_LIDAR_RAYS = 100  # Nombre de rayons LIDAR
+    N_LIDAR_RAYS = 32  # Nombre de rayons LIDAR
     LIDAR_RANGE = 2.0  # Portée maximale du LIDAR (en m)
 
     # ---  Hyperparamètres (basés sur le rapport et les pratiques RL) ---
@@ -23,7 +23,7 @@ class Params:
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
-    NUM_EPISODES = 300000
+    NUM_EPISODES = 1_000_000
     # epsilon decay adjusted to reach EPSILON_MIN near the end of training (exponential decay)
 
     EPSILON_DECAY = np.exp(2 * np.log(EPSILON_MIN) / NUM_EPISODES)
@@ -42,7 +42,7 @@ class Params:
     MAX_STEPS_PER_EPISODE = 100  # Étapes fixées pour l'entraînement [cite: 163]
     MAX_TEST_STEPS = 1000  # Étapes maximales pour l'évaluation
     TIMESTEP_REWARD = -.1
-    GOAL_REWARD = 10.0
+    GOAL_REWARD = 20.0
     COLLISION_REWARD = -10.0
 
     # Paramètres du Curriculum Learning (Distance L) [cite: 135-139]
