@@ -23,7 +23,7 @@ class Params:
     REPLAY_BUFFER_CAPACITY = 40000
     BATCH_SIZE = 32
     TRAINING_START_STEPS = 5000  # Remplissage du buffer avant l'entraînement [cite: 264]
-    TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
+    TRAINING_FREQUENCY_STEPS = 4    # Entraînement toutes les 4 étapes [cite: 265]
     TARGET_UPDATE_FREQUENCY = 200  # Mise à jour du réseau cible tous les C pas
 
     # Paramètres de l'environnement
