@@ -9,5 +9,8 @@ scenarios/__pycache__/
 __pycache__/
 
 ddqn_q_network.pt
+test_ddqn.pt
+results/
+networks/
 
 logs/

@@ -562,15 +562,25 @@ class PathPlanningScenario(BaseScenario):
         
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
-        is_at_goal = dist < 0.11
-        epsilon = 1e-6
+        is_at_goal = dist < 0.10
 
         progress = (self.prev_dist_to_goal - dist)
-        # Utiliser une échelle de 0.1 pour que le progrès ait un impact significatif, mais reste inférieur à +1.0 (Succès).
-        #PROGRESS_REWARD_SCALE = 2 # À définir dans Params.py
-        #progress_reward = PROGRESS_REWARD_SCALE * progress
         decreased = progress >= 0
         increased = progress < 0
+
+        #Lidar penalty
+        MIN_DIST_THRESHOLD = 0.25 # 1.0m de distance réelle (0.5 * 2.0m)
+        PROXIMITY_PENALTY_SCALE = 0.5 # Ajustez ce facteur
+
+        lidar_distances = agent.sensors[0].measure()
+        min_dist = torch.min(lidar_distances, dim=-1).values
+        proximity_penalty = torch.zeros_like(min_dist)
+        too_close_mask = min_dist < MIN_DIST_THRESHOLD
+        penalty_magnitude = MIN_DIST_THRESHOLD - min_dist[too_close_mask]
+        proximity_penalty[too_close_mask] = -PROXIMITY_PENALTY_SCALE * penalty_magnitude
+
+
+
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for entity in self.world.agents + self.world.landmarks:
@@ -583,6 +593,7 @@ class PathPlanningScenario(BaseScenario):
         rews[decreased] += 0.5
         rews[increased] -= 0.5
         rews += -0.01 # Time penalty
+        rews += proximity_penalty
 
         self.prev_dist_to_goal = dist.clone().detach()        
         return rews
@@ -597,7 +608,7 @@ class PathPlanningScenario(BaseScenario):
         """
         # Distance to goal
         dist = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
-        reached_goal = dist < 0.11  # same threshold as in reward
+        reached_goal = dist < 0.10  # same threshold as in reward
 
         # Collision with any collidable entity
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
@@ -609,14 +620,14 @@ class PathPlanningScenario(BaseScenario):
         terminated = reached_goal | is_collision
         return terminated
 
-    def observation(self, agent: Agent):
+    def observation(self, agent: 'Agent'):
         batch_dim = self.world.batch_dim
         device = self.world.device
 
         # --- 1. Lidar Mesures (360 éléments) ---
         lidar_distances = agent.sensors[0].measure()/self.lidar_range # (B, 360)
 
-        # Création des angles (0-360)
+        # Création des angles (0-2*pi)
         angle_vector = torch.linspace(start=0, end=2*np.pi, steps=self.n_lidar_rays, device=device).unsqueeze(0)
         lidar_angles = angle_vector.repeat(batch_dim, 1) # (B, 360)
         # Empilement et Transposition: (B, 360, 2) -> (B, 2, 360)
@@ -626,18 +637,32 @@ class PathPlanningScenario(BaseScenario):
         
         # --- 2. Cible Locale (80 éléments) ---
         delta_pos = self.goal.state.pos - agent.state.pos # (B, 2)
+        
+        # --- MODIFICATION: Passage aux Coordonnées Polaires ---
 
-        # 40 copies de (dX, dY) -> 80 éléments (B, 80)
-        target_vector = delta_pos.repeat(1, 40)
-        # Total éléments: B * 80.
+        # 1. Calcul de la Distance (r)
+        # torch.norm(..., dim=1) calcule la norme sur la dimension (X, Y)
+        distance = torch.norm(delta_pos, dim=1, keepdim=True) # (B, 1)
+
+        # 2. Calcul de l'Angle (theta)
+        # torch.atan2(Y, X) donne l'angle dans [-pi, pi]
+        angle = torch.atan2(delta_pos[:, 1], delta_pos[:, 0]).unsqueeze(1) # (B, 1)
+        agent_orientation = agent.state.rot
+        angle = angle - agent_orientation
+        
+        # L'angle peut être normalisé si nécessaire, par exemple en divisant par pi 
+        # angle = angle / np.pi 
+
+        # Concaténation des coordonnées polaires (Distance, Angle)
+        polar_coords = torch.cat((distance, angle), dim=1) # (B, 2)
+        
+        # 40 copies de (Distance, Angle) -> 80 éléments (B, 80)
+        target_vector = polar_coords.repeat(1, 40)
         target_input_reshaped = target_vector.reshape(batch_dim, 2, 2, 20)
 
         # --- 3. Concaténation Finale (B, 2, 20, 20) ---
         # Concaténation sur dim=2 (Hauteur: 18 + 2 = 20)
-        raw_input_800 = torch.cat(
-        (lidar_input_reshaped, target_input_reshaped), dim=2 )
-       
-
+        raw_input_800 = torch.cat((lidar_input_reshaped, target_input_reshaped), dim=2 )
         return raw_input_800
 
     def info(self, agent: Agent) -> Dict[str, torch.Tensor]:
@@ -658,54 +683,6 @@ class PathPlanningScenario(BaseScenario):
         self._max_dist = max_dist
         if self.debug:
             print(f"[Scenario] Set spawn max_dist to: {self._max_dist}")
-
-    def _get_goal_proxy_pos(self, agent: Agent):
-        """
-        Calcule la position du point d'intersection entre le segment agent-goal
-        et le cercle de rayon 2.0m centré sur l'agent,
-        ou la position du goal si celui-ci est à moins de 2.0m.
-        
-        Args:
-            agent (Agent): L'agent robot.
-            
-        Returns:
-            torch.Tensor: Tenseur de position (B, 2) du point cible.
-        """
-        R = 2.0 # Rayon du cercle (2 mètres)
-        
-        # D: Vecteur directionnel (Goal - Agent)
-        # self.goal.state.pos est de taille (B, 2)
-        # agent.state.pos est de taille (B, 2)
-        D = self.goal.state.pos - agent.state.pos
-        
-        # norm_D: Distance entre l'agent et le but, de taille (B, 1)
-        norm_D = torch.linalg.norm(D, dim=-1, keepdim=True)
-        
-        # ----------------------------------------------------
-        # Cas 1: Distance > R (Agent est loin, le but est le point sur le cercle)
-        # ----------------------------------------------------
-        mask_far = norm_D > R
-        
-        # Éviter la division par zéro en utilisant torch.where
-        # Nous remplaçons les zéros par un '1' pour le calcul du rapport, 
-        # mais le masque garantira que ce calcul n'est pas utilisé pour les cas près.
-        safe_norm_D = torch.where(norm_D == 0, torch.tensor(1.0, device=norm_D.device), norm_D)
-        
-        # Facteur d'échelle: alpha = R / ||D||
-        alpha = R / safe_norm_D
-        
-        # Position cible P_int_far = Agent.pos + alpha * D
-        P_int_far = agent.state.pos + alpha * D
-        
-        # ----------------------------------------------------
-        # Cas 2: Distance <= R (Agent est près, le but est la position du Goal)
-        # ----------------------------------------------------
-        P_int_near = self.goal.state.pos
-        
-        # Combinaison des deux cas
-        goal_proxy_pos = torch.where(mask_far, P_int_far, P_int_near)
-        
-        return goal_proxy_pos
 
     @property
     def max_dist(self) -> float:

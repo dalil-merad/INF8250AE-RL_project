@@ -20,16 +20,16 @@ class Params:
     EPSILON_DECAY = 0.9999  
 
     # Paramètres du Replay Buffer [cite: 262, 266]
-    REPLAY_BUFFER_CAPACITY = 40000
+    REPLAY_BUFFER_CAPACITY = 80000
     BATCH_SIZE = 32
-    TRAINING_START_STEPS = 35000  # Remplissage du buffer avant l'entraînement [cite: 264]
+    TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
     # Paramètres de l'environnement
     CNN_INPUT_CHANNELS = 2 # 2 canaux (Angle, Distance) pour l'entrée 20x20x2
     ACTION_SIZE = 8        # 8 directions de mouvement [cite: 107]
-    NUM_EPISODES = 20000 #40000   # Le rapport utilise 30000-40000 epochs pour la convergence
+    NUM_EPISODES = 35000 #40000   # Le rapport utilise 30000-40000 epochs pour la convergence
     MAX_STEPS_PER_EPISODE = 100 # Étapes fixées pour l'entraînement [cite: 163]
     MAX_TEST_STEPS = 1000  # Étapes maximales pour l'évaluation
 
