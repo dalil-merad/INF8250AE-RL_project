@@ -9,7 +9,7 @@ from agent.ddqn_agent import QNetwork
 from agent.params import Params
 
 # --- CONFIGURATION ---
-MODEL_PATH = "results/251213-202959/ddqn_q_network.pt"
+MODEL_PATH = "results/251213-224333/ddqn_q_network.pt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_EVAL_EPISODES = 5
 RENDER_DELAY = 0.05

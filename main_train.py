@@ -13,11 +13,12 @@ import csv
 import numpy as np
 from utils_eval import generate_plots
 import datetime
+import os
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 32  # 1024
+NUM_ENVS = 128  # 1024
 
 # Optionnel: rendu pendant l'entraînement
 RENDER_DURING_TRAINING = False  # passez à True pour activer
@@ -298,6 +299,8 @@ def save_agent(q_network, out_path, filename="ddqn_q_network.pt"):
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
     trained_network, results = training_loop()
     save_agent(trained_network, out_path=output_path, filename="ddqn_q_network.pt")
     generate_plots(results=results, output_path=output_path)
