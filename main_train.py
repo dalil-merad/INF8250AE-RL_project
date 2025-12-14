@@ -18,7 +18,7 @@ import os
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 current_step = 0
 epsilon = Params.EPSILON_START
-NUM_ENVS = 128  # 1024
+NUM_ENVS = 256  # 1024
 
 # Optionnel: rendu pendant l'entraînement
 RENDER_DURING_TRAINING = False  # passez à True pour activer

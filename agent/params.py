@@ -34,7 +34,7 @@ class Params:
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
     # Paramètres de l'environnement
-    NUM_EPISODES = 400000  # 40000   # Le rapport utilise 30000-40000 epochs pour la convergence
+    NUM_EPISODES = 300000  # 40000   # Le rapport utilise 30000-40000 epochs pour la convergence
     MAX_STEPS_PER_EPISODE = 100  # Étapes fixées pour l'entraînement [cite: 163]
     MAX_TEST_STEPS = 1000  # Étapes maximales pour l'évaluation
     TIMESTEP_REWARD = -.1
