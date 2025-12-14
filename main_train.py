@@ -85,7 +85,7 @@ def training_loop(resume_from: str | None = None):
     env.scenario.set_max_dist(max_dist_L)
 
     # Réinitialisation initiale de tous les environnements
-    state_dict = env.reset()            # dict d'obs par agent
+    state_dict, info_dict = env.reset(return_info=True)            # dict d'obs par agent
     state_tensor = state_dict["robot"]  # (NUM_ENVS, 2, 20, 20)
     total_reward = torch.zeros(NUM_ENVS, dtype=torch.float32, device=DEVICE)
 
@@ -95,177 +95,182 @@ def training_loop(resume_from: str | None = None):
     current_loss = 0.0
     # --- Boucle d'entraînement principale basée sur le nombre total d'épisodes ---
     pbar = tqdm(total=Params.NUM_EPISODES)
-    while total_episodes < Params.NUM_EPISODES:
+    try:
+        while total_episodes < Params.NUM_EPISODES:
 
-        # C. Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
-        with torch.no_grad():
-            q_values = q_network(state_tensor)           # (NUM_ENVS, ACTION_SIZE)
-            exploitative_actions = torch.argmax(q_values, dim=1)  # (NUM_ENVS,)
-
-            is_explore = torch.rand(NUM_ENVS, device=DEVICE) < epsilon
-            random_actions_indices = torch.randint(
-                low=0, high=ACTION_SIZE, size=(NUM_ENVS,), device=DEVICE
-            )
-            action_indices = torch.where(is_explore, random_actions_indices, exploitative_actions)
-
-        # D. Exécution de l'action (parallèle)
-        discrete_actions = action_indices.unsqueeze(-1)  # (NUM_ENVS, 1) pour MultiDiscrete
-        next_state_dict, reward_dict, done_tensor, info_dict = env.step([discrete_actions])
-
-        # Optionnel: rendu pendant l'entraînement (par ex. seulement env_index=0)
-        if RENDER_DURING_TRAINING:
-            if render_steps_remaining > 0:
-                env.render(env_index=0, mode="human")
-                render_steps_remaining -= 1
-            elif render_steps_remaining % RENDER_EVERY_N_STEPS == 0:
-                # Démarrer une nouvelle fenêtre de rendu
-                render_steps_remaining = RENDER_NUM_STEPS
-                env.render(env_index=0, mode="human")
-                render_steps_remaining -= 1
-
-        next_state_tensor = next_state_dict["robot"]          # (NUM_ENVS, 2, 20, 20)
-        reward_tensor = reward_dict["robot"].to(DEVICE)       # (NUM_ENVS,)
-        done_tensor = done_tensor.to(DEVICE)                  # (NUM_ENVS,) bool
-
-        # Mise à jour des récompenses cumulées par environnement
-        total_reward += reward_tensor
-
-        # --- Ajout au replay buffer en parallèle pour tous les envs ---
-        transition = TensorDict(
-            {
-                "state": state_tensor,                     # (NUM_ENVS, 2, 20, 20)
-                "action": action_indices,                  # (NUM_ENVS,)
-                "reward": reward_tensor,                   # (NUM_ENVS,)
-                "next_state": next_state_tensor,           # (NUM_ENVS, 2, 20, 20)
-                "done": done_tensor.float(),               # (NUM_ENVS,)
-            },
-            batch_size=[NUM_ENVS],
-            device=DEVICE,
-        )
-        replay_buffer.extend(transition)
-        current_step += NUM_ENVS
-
-        # --- Comptage des épisodes terminés & logging des retours ---
-        done_mask = done_tensor.bool()                      # (NUM_ENVS,)
-        episodes_this_step = done_mask.long().sum().item()
-
-        if episodes_this_step > 0:
-            done_indices = torch.nonzero(done_mask, as_tuple=False).squeeze(-1)
-
-            # Enregistrer les récompenses d'épisode pour les envs terminés
-            for idx in done_indices.tolist():
-                rewards_per_episode.append(total_reward[idx].item())
-                total_reward[idx] = 0.0  # reset cumul pour ce env
-                len_Reward_episode += 1
-                if len_Reward_episode >= 100:
-                    avg_reward_100 = np.mean(rewards_per_episode)
-                    cumulative_rewards_avg.append(avg_reward_100)
-                    len_Reward_episode = 0
-
-            total_episodes += episodes_this_step
-            pbar.update(episodes_this_step)
-
-            # Logging
-            if total_episodes % LOG_EVERY_N_EPISODES == 0:
-                avg_r = sum(rewards_per_episode) / len(rewards_per_episode) if rewards_per_episode else 0
-                print('\r', end="", flush=True)
-                print(
-                    f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} " 
-                    + f"| Eps: {epsilon:.2f} | L: {max_dist_L:.2f} | Tstep:{training_step}")
-
-                log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon, max_dist_L, training_step])
-                log_f.flush()
-
-            # --- Reset des environnements terminés ---
-            # On réinitialise chaque env terminé, sans récupérer les obs ici
-            for idx in done_indices.tolist():
-                env.reset_at(
-                    idx,
-                    return_observations=False,
-                    return_info=False,
-                    return_dones=False,
-                )
-
-            # Après tous les resets, on récupère une seule fois les observations pour tous les envs
-            obs_dict = env.get_from_scenario(
-                get_observations=True,
-                get_rewards=False,
-                get_infos=False,
-                get_dones=False,
-                dict_agent_names=True,
-            )
-            # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
-            if isinstance(obs_dict, list):
-                obs_dict = obs_dict[0]
-            latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
-
-            # Tous les envs ont maintenant dans world l'état correct:
-            # - envs done -> reset
-            # - envs non done -> états avancés par world.step()
-            state_tensor = latest_robot_obs
-        else:
-            # Aucun env n'est terminé: tous avancent avec next_state_tensor
-            state_tensor = next_state_tensor
-
-        # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
-        # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
-        if (
-            len(replay_buffer) >= Params.TRAINING_START_STEPS
-            and current_step % (NUM_ENVS * Params.TRAINING_FREQUENCY_STEPS) == 0
-        ):
-            batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
-            states_tensor = batch["state"].to(DEVICE)        # (B, 2, 20, 20)
-            actions_tensor = batch["action"].to(DEVICE).long()      # (B,)
-            rewards_batch = batch["reward"].to(DEVICE).float()      # (B,)
-            next_states_batch = batch["next_state"].to(DEVICE)      # (B, 2, 20, 20)
-            dones_batch = batch["done"].to(DEVICE).float()          # (B,)
-
-            # --- DDQN target ---
+            # C. Sélection de l'action (Epsilon-greedy) en parallèle pour tous les envs
             with torch.no_grad():
-                next_actions = torch.argmax(q_network(next_states_batch), dim=1, keepdim=True)   # (B,1)
-                next_q_target = target_q_network(next_states_batch).gather(1, next_actions).squeeze(1)  # (B,)
-                target_q_values = rewards_batch + Params.GAMMA * next_q_target * (1.0 - dones_batch)
+                q_values = q_network(state_tensor)           # (NUM_ENVS, ACTION_SIZE)
+                exploitative_actions = torch.argmax(q_values, dim=1)  # (NUM_ENVS,)
 
-            predicted_q_values = q_network(states_tensor).gather(
-                1, actions_tensor.unsqueeze(1)
-            ).squeeze(1)
+                is_explore = torch.rand(NUM_ENVS, device=DEVICE) < epsilon
+                random_actions_indices = torch.randint(
+                    low=0, high=ACTION_SIZE, size=(NUM_ENVS,), device=DEVICE
+                )
+                action_indices = torch.where(is_explore, random_actions_indices, exploitative_actions)
 
-            loss = criterion(predicted_q_values, target_q_values)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # D. Exécution de l'action (parallèle)
+            discrete_actions = action_indices.unsqueeze(-1)  # (NUM_ENVS, 1) pour MultiDiscrete
+            next_state_dict, reward_dict, done_tensor, info_dict = env.step([discrete_actions])
 
-            current_loss = loss.item()
-            cumulative_loss += current_loss
+            # Optionnel: rendu pendant l'entraînement (par ex. seulement env_index=0)
+            if RENDER_DURING_TRAINING:
+                if render_steps_remaining > 0:
+                    env.render(env_index=0, mode="human")
+                    render_steps_remaining -= 1
+                elif render_steps_remaining % RENDER_EVERY_N_STEPS == 0:
+                    # Démarrer une nouvelle fenêtre de rendu
+                    render_steps_remaining = RENDER_NUM_STEPS
+                    env.render(env_index=0, mode="human")
+                    render_steps_remaining -= 1
 
-            # Mise à jour Epsilon (par batch d'entraînement)
-            epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
+            next_state_tensor = next_state_dict["robot"]          # (NUM_ENVS, 2, 20, 20)
+            reward_tensor = reward_dict["robot"].to(DEVICE)       # (NUM_ENVS,)
+            done_tensor = done_tensor.to(DEVICE)                  # (NUM_ENVS,) bool
+
+            # Mise à jour des récompenses cumulées par environnement
+            total_reward += reward_tensor
+
+            # --- Ajout au replay buffer en parallèle pour tous les envs ---
+            transition = TensorDict(
+                {
+                    "state": state_tensor,                     # (NUM_ENVS, 2, 20, 20)
+                    "action": action_indices,                  # (NUM_ENVS,)
+                    "reward": reward_tensor,                   # (NUM_ENVS,)
+                    "next_state": next_state_tensor,           # (NUM_ENVS, 2, 20, 20)
+                    "done": done_tensor.float(),               # (NUM_ENVS,)
+                },
+                batch_size=[NUM_ENVS],
+                device=DEVICE,
+            )
+            replay_buffer.extend(transition)
+            current_step += NUM_ENVS
+
+            # --- Comptage des épisodes terminés & logging des retours ---
+            done_mask = done_tensor.bool()                      # (NUM_ENVS,)
+            episodes_this_step = done_mask.long().sum().item()
+
+            if episodes_this_step > 0:
+                done_indices = torch.nonzero(done_mask, as_tuple=False).squeeze(-1)
+
+                # Enregistrer les récompenses d'épisode pour les envs terminés
+                for idx in done_indices.tolist():
+                    rewards_per_episode.append(total_reward[idx].item())
+                    total_reward[idx] = 0.0  # reset cumul pour ce env
+                    len_Reward_episode += 1
+                    if len_Reward_episode >= 100:
+                        avg_reward_100 = np.mean(rewards_per_episode)
+                        cumulative_rewards_avg.append(avg_reward_100)
+                        len_Reward_episode = 0
+
+                total_episodes += episodes_this_step
+                pbar.update(episodes_this_step)
+
+                # Logging
+                if total_episodes % LOG_EVERY_N_EPISODES == 0:
+                    avg_r = sum(rewards_per_episode) / len(rewards_per_episode) if rewards_per_episode else 0
+                    print('\r', end="", flush=True)
+                    print(
+                        f"Ep: {total_episodes} | Avg R: {avg_r:.2f} | Loss: {current_loss:.4f} " 
+                        + f"| Eps: {epsilon:.2f} | L: {max_dist_L:.2f} | Tstep:{training_step}")
+
+                    log_writer.writerow([total_episodes, current_step, avg_r, current_loss, epsilon, max_dist_L, training_step])
+                    log_f.flush()
+
+                # --- Reset des environnements terminés ---
+                # On réinitialise chaque env terminé, sans récupérer les obs ici
+                for idx in done_indices.tolist():
+                    env.reset_at(
+                        idx,
+                        return_observations=False,
+                        return_info=False,
+                        return_dones=False,
+                    )
+
+                # Après tous les resets, on récupère une seule fois les observations pour tous les envs
+                obs_dict = env.get_from_scenario(
+                    get_observations=True,
+                    get_rewards=False,
+                    get_infos=False,
+                    get_dones=False,
+                    dict_agent_names=True,
+                )
+                # get_from_scenario renvoie [obs_dict] quand seuls les obs sont demandés
+                if isinstance(obs_dict, list):
+                    obs_dict = obs_dict[0]
+                latest_robot_obs = obs_dict["robot"]        # (NUM_ENVS, 2, 20, 20)
+
+                # Tous les envs ont maintenant dans world l'état correct:
+                # - envs done -> reset
+                # - envs non done -> états avancés par world.step()
+                state_tensor = latest_robot_obs
+            else:
+                # Aucun env n'est terminé: tous avancent avec next_state_tensor
+                state_tensor = next_state_tensor
+
+            # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
+            # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
+            if (
+                len(replay_buffer) >= Params.TRAINING_START_STEPS
+                and current_step % (NUM_ENVS * Params.TRAINING_FREQUENCY_STEPS) == 0
+            ):
+                batch = replay_buffer.sample(Params.BATCH_SIZE)  # TensorDict de taille (BATCH_SIZE,)
+                states_tensor = batch["state"].to(DEVICE)        # (B, 2, 20, 20)
+                actions_tensor = batch["action"].to(DEVICE).long()      # (B,)
+                rewards_batch = batch["reward"].to(DEVICE).float()      # (B,)
+                next_states_batch = batch["next_state"].to(DEVICE)      # (B, 2, 20, 20)
+                dones_batch = batch["done"].to(DEVICE).float()          # (B,)
+
+                # --- DDQN target ---
+                with torch.no_grad():
+                    next_actions = torch.argmax(q_network(next_states_batch), dim=1, keepdim=True)   # (B,1)
+                    next_q_target = target_q_network(next_states_batch).gather(1, next_actions).squeeze(1)  # (B,)
+                    target_q_values = rewards_batch + Params.GAMMA * next_q_target * (1.0 - dones_batch)
+
+                predicted_q_values = q_network(states_tensor).gather(
+                    1, actions_tensor.unsqueeze(1)
+                ).squeeze(1)
+
+                loss = criterion(predicted_q_values, target_q_values)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                current_loss = loss.item()
+                cumulative_loss += current_loss
+
+                # Mise à jour Epsilon (par batch d'entraînement)
+                epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
+                
+                # Mise à jour Learning rate (par batch d'entraînement)
+                scheduler.step()
+                learning_rate = optimizer.param_groups[0]['lr']
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = learning_rate
+
+                # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
+                training_step += 1
+
+            # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
+            if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
+                target_q_network.load_state_dict(q_network.state_dict())
             
-            # Mise à jour Learning rate (par batch d'entraînement)
-            scheduler.step()
-            learning_rate = optimizer.param_groups[0]['lr']
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = learning_rate
+            if training_step % 100 == 0:
+                losses.append(np.mean(cumulative_loss/100))
+                cumulative_loss = 0
 
-            # Réinitialiser le compteur d'échantillons depuis le dernier entraînement
-            training_step += 1
+            if training_step % 50 == 0:
+                torch.save(q_network.state_dict(), "test_ddqn.pt")
 
-        # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
-        if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
-            target_q_network.load_state_dict(q_network.state_dict())
-        
-        if training_step % 100 == 0:
-            losses.append(np.mean(cumulative_loss/100))
-            cumulative_loss = 0
+            # Curriculum Learning basé sur le nombre total d'épisodes terminés
+            max_dist_L = update_L(total_episodes)
+            env.scenario.set_max_dist(max_dist_L)
+    except KeyboardInterrupt:
+        print("\n[INFO] Training interrupted (Ctrl-C). Returning current network for checkpointing...")
+    finally:
+        pbar.close()
+        log_f.close()
 
-        if training_step % 50 == 0:
-            torch.save(q_network.state_dict(), "test_ddqn.pt")
-
-        # Curriculum Learning basé sur le nombre total d'épisodes terminés
-        max_dist_L = update_L(total_episodes)
-        env.scenario.set_max_dist(max_dist_L)
-    pbar.close()
-    log_f.close()
     # --- 4. Évaluation Finale ---
     results["average_reward"] = cumulative_rewards_avg
     results["loss"] = losses
@@ -290,6 +295,6 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné
-    trained_network, results = training_loop(resume_from='ddqn_q_network.pt')
-    save_agent(trained_network, filename="ddqn_q_network_test2.pt")
+    trained_network, results = training_loop(resume_from=None)
+    save_agent(trained_network, filename="ddqn_q_network_try_except.pt")
     generate_plots(results=results)
