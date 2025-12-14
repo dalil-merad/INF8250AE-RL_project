@@ -44,6 +44,7 @@ class Params:
     TIMESTEP_REWARD = -.1
     GOAL_REWARD = 20.0
     COLLISION_REWARD = -10.0
+    PROGRESS_REWARD = .1
 
     # Paramètres du Curriculum Learning (Distance L) [cite: 135-139]
     # Ces valeurs doivent être ajustées selon l'expérience. Ici, une suggestion:

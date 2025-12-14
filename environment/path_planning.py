@@ -73,6 +73,7 @@ class PathPlanningScenario(BaseScenario):
         self._max_dist = 4.0  # Default max distance
         self.max_static_walls = MAX_STATIC_WALLS  # Max number of static walls
         self.global_time = torch.empty(1)
+        self.prev_dist_to_goal = torch.empty(1)
 
     def set_max_dist(self, max_dist: float):
         self._max_dist = max_dist
@@ -170,7 +171,7 @@ class PathPlanningScenario(BaseScenario):
         #     wall.set_pos(torch.tensor([x, y], device=device).unsqueeze(0).repeat(batch_dim, 1), batch_index=None)
         #     self.walls.append(wall)
         self.global_time = torch.zeros(batch_dim, device=device)
-
+        self.prev_dist_to_goal = torch.zeros(batch_dim, dtype=torch.float32, device=device)
         return world
 
     def reset_world_at(self, env_index: int = None):
@@ -301,6 +302,8 @@ class PathPlanningScenario(BaseScenario):
 
             # If we reached here, positions are valid
             placed = True
+            new_initial_dist = torch.linalg.norm(self.agent.state.pos[env_index] - self.goal.state.pos[env_index])
+            self.prev_dist_to_goal[env_index] = new_initial_dist.clone().detach()
 
         if not placed:
             print(f"Warning: Could not place agent safely in env {env_index} after {attempts} attempts.")
@@ -311,6 +314,9 @@ class PathPlanningScenario(BaseScenario):
         dist_to_goal = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
         at_goal = dist_to_goal < (self.agent_radius + self.goal_radius)
         step_reward[at_goal] += Params.GOAL_REWARD
+
+        progress = (self.prev_dist_to_goal - dist_to_goal) > 0.0  # Did we get closer?
+        step_reward[progress] += Params.PROGRESS_REWARD  # Small reward for getting closer
 
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for wall in self.walls:
