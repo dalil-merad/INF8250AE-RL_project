@@ -418,59 +418,53 @@ class PathPlanningScenario(BaseScenario):
                     obs.patrol_start[i] = p_start
                     obs.patrol_end[i] = p_end
             
-            # 3. Reset Robot and Goal with Constraints (Goal-First Logic)
+            # 3. Reset Robot and Goal with Constraints (AGENT-FIRST LOGIC)
             placed = False
             attempts = 0
 
             # Define bounds for random sampling
             x_range = [-self.world_x_bound, self.world_x_bound]
             y_range = [-self.world_y_bound, self.world_y_bound]
-            
+
             while not placed and attempts < 1000:
-                # 3a. Randomly sample Goal Position in the 5.6m x 3.6m box
-                goal_pos_np = np.array([
-                    np.random.uniform(x_range[0], x_range[1]),
-                    np.random.uniform(y_range[0], y_range[1])
-                ])
-                
-                # Check if Goal position is collision-free
-                if not self._is_collision_free(goal_pos_np, map_id):
+                # 3a) Sample AGENT uniformly in bounds
+                agent_pos_np = np.array(
+                    [
+                        np.random.uniform(x_range[0], x_range[1]),
+                        np.random.uniform(y_range[0], y_range[1]),
+                    ]
+                )
+
+                if not self._is_collision_free(agent_pos_np, map_id):
                     attempts += 1
                     continue
-                
-                # 3b. Randomly sample Agent Position (within max_dist of goal)
-                # 1. Sample direction (angle)
+
+                # 3b) Sample GOAL within [min_dist, max_dist] of the agent
                 angle = np.random.uniform(0, 2 * np.pi)
-                # 2. Sample distance (0.11m min to prevent trivial rewards and allow
-                # at least one movement to reach goal, up to L)
                 distance = np.random.uniform(0.13, self._max_dist)
-                
-                # Calculate agent position relative to goal
-                agent_pos_candidate = goal_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
-                
-                # Clamp agent position to the 5.6m x 3.6m boundary 
-                agent_pos_np = np.array([
-                    np.clip(agent_pos_candidate[0], x_range[0], x_range[1]),
-                    np.clip(agent_pos_candidate[1], y_range[0], y_range[1])
-                ])
 
-                # Recalculate distance after clamping to ensure it is still valid
-                final_dist = np.linalg.norm(agent_pos_np - goal_pos_np)
-                
-                # Check constraints: 
-                # 1. Agent must be collision free (checked inside _is_collision_free, boundary check needed here too)
-                # 2. Agent must be within max_dist (L) of the goal after clamping.
-                # 3. Agent cannot be trivially close to the goal (min dist 0.2m)
-                
-                # Note: The boundary check is now redundant if we sample in the bounds, 
-                # but we must re-check collision and the distance constraint.
-                if not self._is_collision_free(agent_pos_np, map_id) or \
-                   final_dist > self._max_dist or \
-                   final_dist < 0.13:
+                goal_pos_candidate = agent_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
+
+                # Clamp goal into bounds
+                goal_pos_np = np.array(
+                    [
+                        np.clip(goal_pos_candidate[0], x_range[0], x_range[1]),
+                        np.clip(goal_pos_candidate[1], y_range[0], y_range[1]),
+                    ]
+                )
+
+                final_dist = np.linalg.norm(goal_pos_np - agent_pos_np)
+
+                # Validate goal placement
+                if (
+                    (not self._is_collision_free(goal_pos_np, map_id))
+                    or (final_dist > self._max_dist)
+                    or (final_dist < 0.13)
+                ):
                     attempts += 1
                     continue
 
-                # Placement successful
+                # Placement successful (agent first, then goal)
                 self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
                 self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
 
@@ -481,13 +475,21 @@ class PathPlanningScenario(BaseScenario):
             if not placed:
                 # Fallback in case of failure (should be rare with 1000 attempts)
                 print(f"Warning: Failed to place agent/goal after 1000 attempts in environment {i}. Placing randomly.")
-                # Fallback positions must also respect the 5.6m x 3.6m bounds
-                self.agent.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
-                                                 np.random.uniform(y_range[0], y_range[1])],
-                                                device=self.world.device).unsqueeze(0), batch_index=i)
-                self.goal.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
-                                                np.random.uniform(y_range[0], y_range[1])],
-                                               device=self.world.device).unsqueeze(0), batch_index=i)
+                self.agent.set_pos(
+                    torch.tensor(
+                        [np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])],
+                        device=self.world.device,
+                    ).unsqueeze(0),
+                    batch_index=i,
+                )
+                self.goal.set_pos(
+                    torch.tensor(
+                        [np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])],
+                        device=self.world.device,
+                    ).unsqueeze(0),
+                    batch_index=i,
+                )
+
 
 
     def process_action(self, agent: Agent):
@@ -588,8 +590,8 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 5.0
-        rews[is_collision] -= 10.0
+        rews[is_at_goal] += 10.0
+        rews[is_collision] -= 5.0
         rews[decreased] += 0.5
         rews[increased] -= 0.5
         rews += -0.01 # Time penalty
@@ -628,11 +630,17 @@ class PathPlanningScenario(BaseScenario):
         lidar_distances = agent.sensors[0].measure()/self.lidar_range # (B, 360)
 
         # Création des angles (0-2*pi)
-        angle_vector = torch.linspace(start=0, end=2*np.pi, steps=self.n_lidar_rays, device=device).unsqueeze(0)
+        # IMPORTANT: match VMAS Lidar full-circle discretization (exclude endpoint 2π)
+        angle_vector = torch.linspace(
+            start=0.0,
+            end=2 * np.pi,
+            steps=self.n_lidar_rays + 1,
+            device=device,
+        )[: self.n_lidar_rays].unsqueeze(0)
         lidar_angles = angle_vector.repeat(batch_dim, 1) # (B, 360)
+
         # Empilement et Transposition: (B, 360, 2) -> (B, 2, 360)
         lidar_mesures = torch.stack((lidar_distances, lidar_angles), dim=2).transpose(1, 2)
-        # Total éléments: B * 720. Nous utilisons B = batch_dim.
         lidar_input_reshaped = lidar_mesures.reshape(batch_dim, 2, 18, 20)
         
         # --- 2. Cible Locale (80 éléments) ---
