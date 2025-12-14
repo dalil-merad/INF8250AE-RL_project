@@ -1,3 +1,5 @@
+import numpy as np
+
 class Params:
     """
     Classe contenant les hyperparamètres et configurations pour l'agent RL.
@@ -21,7 +23,10 @@ class Params:
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
-    EPSILON_DECAY = 0.9995
+    NUM_EPISODES = 300000
+    # epsilon decay adjusted to reach EPSILON_MIN near the end of training (exponential decay)
+
+    EPSILON_DECAY = np.exp(2 * np.log(EPSILON_MIN) / NUM_EPISODES)
     CNN_INPUT_CHANNELS = 4  # (Angle, Distance, Goal x, Goal y)
     ACTION_SIZE = 8        # 8 directions de mouvement [cite: 107]
     WORLD_SIZE = 2.0  # Taille de l'environnement (carré de -2m à 2m)
@@ -34,7 +39,6 @@ class Params:
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas
 
     # Paramètres de l'environnement
-    NUM_EPISODES = 300000  # 40000   # Le rapport utilise 30000-40000 epochs pour la convergence
     MAX_STEPS_PER_EPISODE = 100  # Étapes fixées pour l'entraînement [cite: 163]
     MAX_TEST_STEPS = 1000  # Étapes maximales pour l'évaluation
     TIMESTEP_REWARD = -.1
