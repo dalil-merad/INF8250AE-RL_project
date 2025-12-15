@@ -9,7 +9,7 @@ from agent.ddqn_agent import QNetwork
 from agent.params import Params
 
 # --- CONFIGURATION ---
-MODEL_FOLDER = "results/251214-174539/"
+MODEL_FOLDER = "results/251214-181350/"
 MODEL_PATH = MODEL_FOLDER + "ddqn_q_network.pt"
 HYPERPARAM_PATH = MODEL_FOLDER + "hyperparameters.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -321,6 +321,8 @@ class PathPlanningScenario(BaseScenario):
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for wall in self.walls:
             is_collision |= self.world.is_overlapping(agent, wall)
+        for border in self.border_segments:
+            is_collision |= self.world.is_overlapping(agent, border)
 
         step_reward[is_collision] += Params.COLLISION_REWARD
         return step_reward
