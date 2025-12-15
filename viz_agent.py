@@ -156,8 +156,11 @@ def evaluate_visual():
     q_network.eval()
 
     # 4. Loop
-    for episode in range(NUM_EVAL_EPISODES):
-        print(f"\nStarting Episode {episode + 1}...")
+    # for episode in range(NUM_EVAL_EPISODES):
+    episode = 0
+    while True:
+        episode += 1
+        print(f"\nStarting Episode {episode}...")
 
         obs_dict = env.reset()
         state = obs_dict["robot"]
