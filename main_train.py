@@ -21,7 +21,7 @@ epsilon = Params.EPSILON_START
 NUM_ENVS = 512  # 1024
 
 PRETRAINED_PATH = None
-PRETRAINED_PATH = "results/251214-181350/ddqn_q_network.pt"  # <--- CHANGE THIS PATH
+# PRETRAINED_PATH = "results/251214-181350/ddqn_q_network.pt"
 
 # Optionnel: rendu pendant l'entraînement
 RENDER_DURING_TRAINING = False  # passez à True pour activer
@@ -51,23 +51,25 @@ def training_loop():
     target_q_network = QNetwork(state_size=Params.CNN_INPUT_CHANNELS, action_size=Params.ACTION_SIZE).to(DEVICE)
     target_q_network.load_state_dict(q_network.state_dict())  # Initialisation du réseau cible
 
-    if os.path.exists(PRETRAINED_PATH):
-        print(f"Loading weights to hot start from: {PRETRAINED_PATH}")
-        # Load the weights
-        loaded_state_dict = torch.load(PRETRAINED_PATH, map_location=DEVICE)
+    # Chargement des poids pré-entraînés si disponible (hot start)
+    if PRETRAINED_PATH is not None:
+        if os.path.exists(PRETRAINED_PATH):
+            print(f"Loading weights to hot start from: {PRETRAINED_PATH}")
+            # Load the weights
+            loaded_state_dict = torch.load(PRETRAINED_PATH, map_location=DEVICE)
 
-        # Apply to main network
-        q_network.load_state_dict(loaded_state_dict)
+            # Apply to main network
+            q_network.load_state_dict(loaded_state_dict)
 
-        # Apply to target network (crucial for stability at start)
-        target_q_network.load_state_dict(loaded_state_dict)
+            # Apply to target network (crucial for stability at start)
+            target_q_network.load_state_dict(loaded_state_dict)
 
-        # Optional: specific print to confirm
-        print("Hot start successful: Weights loaded.")
-    else:
-        print(f"No pre-trained weights found at {PRETRAINED_PATH}, starting from scratch.")
-        # Only do this if NOT loading weights (or do it anyway, it's safe)
-        target_q_network.load_state_dict(q_network.state_dict())
+            # Optional: specific print to confirm
+            print("Hot start successful: Weights loaded.")
+        else:
+            print(f"No pre-trained weights found at {PRETRAINED_PATH}, starting from scratch.")
+            # Only do this if NOT loading weights (or do it anyway, it's safe)
+            target_q_network.load_state_dict(q_network.state_dict())
 
     target_q_network.eval()  # Le réseau cible ne doit pas être en mode entraînement
     q_network.train()

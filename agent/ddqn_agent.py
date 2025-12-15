@@ -11,39 +11,30 @@ class QNetwork(nn.Module):
     def __init__(self, state_size, action_size):
         super(QNetwork, self).__init__()
 
-        self.n_rays = Params.N_LIDAR_RAYS
+        # --- ADAPTATION FOR NEW OBSERVATION ---
+        # Your new observation is: [Lidar_Distances (N), Goal_X, Goal_Y]
+        # Total input size = N_LIDAR_RAYS + 2
+        self.input_dim = Params.N_LIDAR_RAYS + 2
 
-        # Standard 1D Convolutions for Lidar sequences
-        self.conv1 = nn.Conv1d(in_channels=state_size, out_channels=16, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1)
+        # Fully Connected Layers (MLP)
+        # We start with the input_dim and scale down
+        self.fc1 = nn.Linear(self.input_dim, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
 
-        # Run a dummy pass to check output size.
-        # This handles variable n_rays (0, 10, 360) without math errors.
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, state_size, self.n_rays)
-
-            x = self.conv1(dummy_input)
-            x = self.conv2(x)
-            x = self.conv3(x)
-
-            self.flat_size = int(x.view(1, -1).size(1))
-
-        self.fc1 = nn.Linear(self.flat_size, 256)
-        self.fc2 = nn.Linear(256, action_size)
+        # Output Layer
+        self.fc_out = nn.Linear(64, action_size)
 
     def forward(self, state):
-        # state shape: (Batch, 4, N_RAYS)
+        # state shape is now: (Batch, N_RAYS + 2)
 
-        x = F.relu(self.conv1(state))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        # Pass through hidden layers with ReLU activation
+        x = F.relu(self.fc1(state))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
 
-        # Flatten
-        x = x.reshape(x.shape[0], -1)
-
-        x = F.relu(self.fc1(x))
-        return self.fc2(x)
+        # Output layer (Raw Q-Values, no activation)
+        return self.fc_out(x)
 
 
 class ReplayBuffer:

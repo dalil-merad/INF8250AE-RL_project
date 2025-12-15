@@ -331,11 +331,11 @@ class PathPlanningScenario(BaseScenario):
         dist_to_goal = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
         at_goal = dist_to_goal < (self.agent_radius + self.goal_radius)
 
-        is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
-        for wall in self.walls:
-            is_collision |= self.world.is_overlapping(self.agent, wall)
+        # is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
+        # for wall in self.walls:
+        #     is_collision |= self.world.is_overlapping(self.agent, wall)
 
-        return at_goal | is_collision
+        return at_goal  # | is_collision
 
     def observation(self, agent: Agent):
         batch_dim = self.world.batch_dim
@@ -345,20 +345,21 @@ class PathPlanningScenario(BaseScenario):
         # 1. Lidar Data: (B, 2, N_RAYS)
         # Channel 0: Distances, Channel 1: Angles
         lidar_distances = agent.sensors[0].measure()
-        lidar_angles = torch.linspace(0, 1, n_rays, device=device).unsqueeze(0).expand(batch_dim, -1)
+        # lidar_angles = torch.linspace(0, 1, n_rays, device=device).unsqueeze(0).expand(batch_dim, -1)
 
         # Shape: (B, 2, N_RAYS)
-        lidar_data = torch.stack([lidar_distances, lidar_angles], dim=1)
+        # lidar_data = torch.stack([lidar_distances, lidar_angles], dim=1)
 
         # 2. Goal Data: (B, 2)
         # We repeat the goal across all rays so the network can "compare" every ray to the goal.
         rel_pos = self.goal.state.pos - agent.state.pos
         # Shape: (B, 2, N_RAYS)
-        goal_data = rel_pos.unsqueeze(2).expand(-1, -1, n_rays)
+        # goal_data = rel_pos.unsqueeze(2).expand(-1, -1, n_rays)
 
         # 3. Combine: (B, 4, N_RAYS)
         # Now you have 4 channels: [Distance, Angle, Goal_X, Goal_Y]
-        obs = torch.cat([lidar_data, goal_data], dim=1)
+        # obs = torch.cat([lidar_data, goal_data], dim=1)
+        obs = torch.cat([lidar_distances, rel_pos], dim=1)
 
         return obs
 
