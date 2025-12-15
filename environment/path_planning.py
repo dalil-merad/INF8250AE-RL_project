@@ -284,210 +284,211 @@ class PathPlanningScenario(BaseScenario):
 
 
     def reset_world_at(self, env_index: int = None):
-        # 1. Decide which Maps to use (Mixed Batch Logic)
-        # If env_index is None when initializing at the start of training or evaluation(reset all),
-        # we pick randoms for everyone
+            # 1. Decide which Maps to use (Mixed Batch Logic)
+            # If env_index is None when initializing at the start of training or evaluation(reset all),
+            # we pick randoms for everyone
 
-        active_training_maps_tensor = torch.tensor(ACTIVE_MAPS_TRAINING, device=self.world.device)
-        active_evaluation_maps_tensor = torch.tensor(ACTIVE_MAPS_EVALUATION, device=self.world.device)
+            active_training_maps_tensor = torch.tensor(ACTIVE_MAPS_TRAINING, device=self.world.device)
+            active_evaluation_maps_tensor = torch.tensor(ACTIVE_MAPS_EVALUATION, device=self.world.device)
 
-        if env_index is None:
-            # Resetting ALL envs.
-            indice = None  # If set to None, VMAS applies to all envs
-            # Reset time for all
-            self.global_time.fill_(0.0)
+            if env_index is None:
+                # Resetting ALL envs.
+                indice = None  # If set to None, VMAS applies to all envs
+                # Reset time for all
+                self.global_time.fill_(0.0)
 
-            if self.training:
-                # Randomly assign Map 0 or Map 1 to each env in the batch
-                map_choices_idx = torch.randint(0,
-                                                len_active_maps_training,
-                                                (self.world.batch_dim,),
-                                                device=self.world.device
-                                                )
-                map_choices = active_training_maps_tensor[map_choices_idx]
+                if self.training:
+                    # Randomly assign Map 0 or Map 1 to each env in the batch
+                    map_choices_idx = torch.randint(0,
+                                                    len_active_maps_training,
+                                                    (self.world.batch_dim,),
+                                                    device=self.world.device
+                                                    )
+                    map_choices = active_training_maps_tensor[map_choices_idx]
+                else:
+                    # Evaluation Mode: Force Map 2 (High Level)
+                    map_choices_idx = torch.randint(0,
+                                                    len_active_evaluation_maps,
+                                                    (self.world.batch_dim,),
+                                                    device=self.world.device
+                                                    )
+                    map_choices = active_evaluation_maps_tensor[map_choices_idx]
             else:
-                # Evaluation Mode: Force Map 2 (High Level)
-                map_choices_idx = torch.randint(0,
-                                                len_active_evaluation_maps,
-                                                (self.world.batch_dim,),
-                                                device=self.world.device
-                                                )
-                map_choices = active_evaluation_maps_tensor[map_choices_idx]
-        else:
-            # Resetting SINGLE env
-            indice = env_index
-            # Reset time for this env
-            self.global_time[env_index] = 0.0
+                # Resetting SINGLE env
+                indice = env_index
+                # Reset time for this env
+                self.global_time[env_index] = 0.0
 
-            if self.training:
-                map_choices_idx = torch.randint(0,
-                                                len_active_maps_training,
-                                                (1,),
-                                                device=self.world.device
-                                                )
-                map_choices = active_training_maps_tensor[map_choices_idx]
-                self.map_choice = map_choices.item()  # TODO: does anything???
+                if self.training:
+                    map_choices_idx = torch.randint(0,
+                                                    len_active_maps_training,
+                                                    (1,),
+                                                    device=self.world.device
+                                                    )
+                    map_choices = active_training_maps_tensor[map_choices_idx]
+                    self.map_choice = map_choices.item()  # TODO: does anything???
+                else:
+                    map_choices_idx = torch.randint(0,
+                                                    len_active_evaluation_maps,
+                                                    (1,),
+                                                    device=self.world.device
+                                                    )
+                    map_choices = active_evaluation_maps_tensor[map_choices_idx]
+                    self.map_choice = map_choices.item()
+
+            # 2. Configure Maps (Iterate via CPU to handle mixed maps)
+            # First, reset all entities to "Out of Bounds" for these indices
+            out_of_bounds = torch.tensor([self.world_x_bound + 1.0, self.world_y_bound + 1.0], device=self.world.device)
+            for entity in self.obstacle_entities:
+                entity.set_pos(out_of_bounds, batch_index=indice)
+                if hasattr(entity, 'state') and entity.state.vel is not None:
+                    zero_vel = torch.zeros_like(entity.state.vel[0])
+                    entity.set_vel(zero_vel, batch_index=indice)
+                if hasattr(entity, 'state') and entity.state.rot is not None:
+                    zero_rot = torch.zeros_like(entity.state.rot[0])
+                    entity.set_rot(zero_rot, batch_index=indice)
+
+            # Apply specific map configurations per environment
+            cpu_map_choices = map_choices.tolist()
+            if env_index is None:
+                cpu_indices = list(range(self.world.batch_dim))
             else:
-                map_choices_idx = torch.randint(0,
-                                                len_active_evaluation_maps,
-                                                (1,),
-                                                device=self.world.device
-                                                )
-                map_choices = active_evaluation_maps_tensor[map_choices_idx]
-                self.map_choice = map_choices.item()
+                # Only configure the requested env index
+                cpu_indices = [env_index]
 
-        # 2. Configure Maps (Iterate via CPU to handle mixed maps)
-        # First, reset all entities to "Out of Bounds" for these indices
-        out_of_bounds = torch.tensor([self.world_x_bound + 1.0, self.world_y_bound + 1.0], device=self.world.device)
-        for entity in self.obstacle_entities:
-            entity.set_pos(out_of_bounds, batch_index=indice)
-            if hasattr(entity, 'state') and entity.state.vel is not None:
-                zero_vel = torch.zeros_like(entity.state.vel[0])
-                entity.set_vel(zero_vel, batch_index=indice)
-            if hasattr(entity, 'state') and entity.state.rot is not None:
-                zero_rot = torch.zeros_like(entity.state.rot[0])
-                entity.set_rot(zero_rot, batch_index=indice)
-
-        # Apply specific map configurations per environment
-        cpu_map_choices = map_choices.tolist()
-        if env_index is None:
-            cpu_indices = list(range(self.world.batch_dim))
-        else:
-            # Only configure the requested env index
-            cpu_indices = [env_index]
-
-        for i, map_id in zip(cpu_indices, cpu_map_choices):
-            walls_data, moving_data = self.parsed_maps[map_id]
-            
-            # Half robot length (robot Box length is 0.2 -> half is 0.1)
-            half_robot_len = 0.1
-
-            # Set Visual Border (4 sides of the map), moved outward by half a robot length
-            # Top border
-            self.border_segments[0].set_pos(
-                torch.tensor([0.0, self.world_y_bound + half_robot_len], device=self.world.device), 
-                batch_index=i
-            )
-            self.border_segments[0].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
-            
-            # Bottom border
-            self.border_segments[1].set_pos(
-                torch.tensor([0.0, -self.world_y_bound - half_robot_len], device=self.world.device), 
-                batch_index=i
-            )
-            self.border_segments[1].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
-            
-            # Left border
-            self.border_segments[2].set_pos(
-                torch.tensor([-self.world_x_bound - half_robot_len, 0.0], device=self.world.device), 
-                batch_index=i
-            )
-            self.border_segments[2].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
-            
-            # Right border
-            self.border_segments[3].set_pos(
-                torch.tensor([self.world_x_bound + half_robot_len, 0.0], device=self.world.device), 
-                batch_index=i
-            )
-            self.border_segments[3].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
-            
-            # Set Walls
-            for w_idx, w_pos in enumerate(walls_data):
-                if w_idx < len(self.walls):
-                    self.walls[w_idx].set_pos(torch.tensor(w_pos, device=self.world.device), batch_index=i)
-            
-            # Set Moving Obstacles
-            for m_idx, m_data in enumerate(moving_data):
-                if m_idx < len(self.moving_obstacles):
-                    obs = self.moving_obstacles[m_idx]
-                    start_pos = torch.tensor(m_data['pos'], device=self.world.device)
-                    obs.set_pos(start_pos, batch_index=i)
-                    
-                    # Randomly decide Patrol Type 
-                    p_start = start_pos.clone()
-                    p_end = start_pos.clone()
-                    
-                    otype = m_data['type']
-                    if otype == 'U':
-                        # Up/Down. Starts at map pos, goes down 4 cells.
-                        p_end[1] += 5 * self.grid_size
-                    elif otype == 'S':
-                        # Sideways. Starts at map pos, goes right 4 cells.
-                        p_end[0] += 5 * self.grid_size
-
-                    obs.patrol_start[i] = p_start
-                    obs.patrol_end[i] = p_end
-            
-            # 3. Reset Robot and Goal with Constraints (Goal-First Logic)
-            placed = False
-            attempts = 0
-
-            # Define bounds for random sampling
-            x_range = [-self.world_x_bound, self.world_x_bound]
-            y_range = [-self.world_y_bound, self.world_y_bound]
-            
-            while not placed and attempts < 1000:
-                # 3a. Randomly sample Goal Position in the 5.6m x 3.6m box
-                goal_pos_np = np.array([
-                    np.random.uniform(x_range[0], x_range[1]),
-                    np.random.uniform(y_range[0], y_range[1])
-                ])
+            for i, map_id in zip(cpu_indices, cpu_map_choices):
+                walls_data, moving_data = self.parsed_maps[map_id]
                 
-                # Check if Goal position is collision-free
-                if not self._is_collision_free(goal_pos_np, map_id):
-                    attempts += 1
-                    continue
-                
-                # 3b. Randomly sample Agent Position (within max_dist of goal)
-                # 1. Sample direction (angle)
-                angle = np.random.uniform(0, 2 * np.pi)
-                # 2. Sample distance (0.11m min to prevent trivial rewards and allow
-                # at least one movement to reach goal, up to L)
-                distance = np.random.uniform(0.13, self._max_dist)
-                
-                # Calculate agent position relative to goal
-                agent_pos_candidate = goal_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
-                
-                # Clamp agent position to the 5.6m x 3.6m boundary 
-                agent_pos_np = np.array([
-                    np.clip(agent_pos_candidate[0], x_range[0], x_range[1]),
-                    np.clip(agent_pos_candidate[1], y_range[0], y_range[1])
-                ])
+                # Half robot length (robot Box length is 0.2 -> half is 0.1)
+                half_robot_len = 0.1
 
-                # Recalculate distance after clamping to ensure it is still valid
-                final_dist = np.linalg.norm(agent_pos_np - goal_pos_np)
+                # Set Visual Border (4 sides of the map), moved outward by half a robot length
+                # Top border
+                self.border_segments[0].set_pos(
+                    torch.tensor([0.0, self.world_y_bound + half_robot_len], device=self.world.device), 
+                    batch_index=i
+                )
+                self.border_segments[0].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
                 
-                # Check constraints: 
-                # 1. Agent must be collision free (checked inside _is_collision_free, boundary check needed here too)
-                # 2. Agent must be within max_dist (L) of the goal after clamping.
-                # 3. Agent cannot be trivially close to the goal (min dist 0.2m)
+                # Bottom border
+                self.border_segments[1].set_pos(
+                    torch.tensor([0.0, -self.world_y_bound - half_robot_len], device=self.world.device), 
+                    batch_index=i
+                )
+                self.border_segments[1].set_rot(torch.tensor([0.0], device=self.world.device), batch_index=i)
                 
-                # Note: The boundary check is now redundant if we sample in the bounds, 
-                # but we must re-check collision and the distance constraint.
-                if not self._is_collision_free(agent_pos_np, map_id) or \
-                   final_dist > self._max_dist or \
-                   final_dist < 0.13:
-                    attempts += 1
-                    continue
+                # Left border
+                self.border_segments[2].set_pos(
+                    torch.tensor([-self.world_x_bound - half_robot_len, 0.0], device=self.world.device), 
+                    batch_index=i
+                )
+                self.border_segments[2].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
+                
+                # Right border
+                self.border_segments[3].set_pos(
+                    torch.tensor([self.world_x_bound + half_robot_len, 0.0], device=self.world.device), 
+                    batch_index=i
+                )
+                self.border_segments[3].set_rot(torch.tensor([1.5708], device=self.world.device), batch_index=i)
+                
+                # Set Walls
+                for w_idx, w_pos in enumerate(walls_data):
+                    if w_idx < len(self.walls):
+                        self.walls[w_idx].set_pos(torch.tensor(w_pos, device=self.world.device), batch_index=i)
+                
+                # Set Moving Obstacles
+                for m_idx, m_data in enumerate(moving_data):
+                    if m_idx < len(self.moving_obstacles):
+                        obs = self.moving_obstacles[m_idx]
+                        start_pos = torch.tensor(m_data['pos'], device=self.world.device)
+                        obs.set_pos(start_pos, batch_index=i)
+                        
+                        # Randomly decide Patrol Type 
+                        p_start = start_pos.clone()
+                        p_end = start_pos.clone()
+                        
+                        otype = m_data['type']
+                        if otype == 'U':
+                            # Up/Down. Starts at map pos, goes down 4 cells.
+                            p_end[1] += 5 * self.grid_size
+                        elif otype == 'S':
+                            # Sideways. Starts at map pos, goes right 4 cells.
+                            p_end[0] += 5 * self.grid_size
 
-                # Placement successful
-                self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
-                self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
+                        obs.patrol_start[i] = p_start
+                        obs.patrol_end[i] = p_end
+                
+                # 3. Reset Robot and Goal with Constraints (AGENT-FIRST LOGIC)
+                placed = False
+                attempts = 0
 
-                new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
-                self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
-                placed = True
+                # Define bounds for random sampling
+                x_range = [-self.world_x_bound, self.world_x_bound]
+                y_range = [-self.world_y_bound, self.world_y_bound]
 
-            if not placed:
-                # Fallback in case of failure (should be rare with 1000 attempts)
-                print(f"Warning: Failed to place agent/goal after 1000 attempts in environment {i}. Placing randomly.")
-                # Fallback positions must also respect the 5.6m x 3.6m bounds
-                self.agent.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
-                                                 np.random.uniform(y_range[0], y_range[1])],
-                                                device=self.world.device).unsqueeze(0), batch_index=i)
-                self.goal.set_pos(torch.tensor([np.random.uniform(x_range[0], x_range[1]),
-                                                np.random.uniform(y_range[0], y_range[1])],
-                                               device=self.world.device).unsqueeze(0), batch_index=i)
+                while not placed and attempts < 1000:
+                    # 3a) Sample AGENT uniformly in bounds
+                    agent_pos_np = np.array(
+                        [
+                            np.random.uniform(x_range[0], x_range[1]),
+                            np.random.uniform(y_range[0], y_range[1]),
+                        ]
+                    )
+
+                    if not self._is_collision_free(agent_pos_np, map_id):
+                        attempts += 1
+                        continue
+
+                    # 3b) Sample GOAL within [min_dist, max_dist] of the agent
+                    angle = np.random.uniform(0, 2 * np.pi)
+                    distance = np.random.uniform(0.13, self._max_dist)
+
+                    goal_pos_candidate = agent_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
+
+                    # Clamp goal into bounds
+                    goal_pos_np = np.array(
+                        [
+                            np.clip(goal_pos_candidate[0], x_range[0], x_range[1]),
+                            np.clip(goal_pos_candidate[1], y_range[0], y_range[1]),
+                        ]
+                    )
+
+                    final_dist = np.linalg.norm(goal_pos_np - agent_pos_np)
+
+                    # Validate goal placement
+                    if (
+                        (not self._is_collision_free(goal_pos_np, map_id))
+                        or (final_dist > self._max_dist)
+                        or (final_dist < 0.13)
+                    ):
+                        attempts += 1
+                        continue
+
+                    # Placement successful (agent first, then goal)
+                    self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
+                    self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
+
+                    new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
+                    self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
+                    placed = True
+
+                if not placed:
+                    # Fallback in case of failure (should be rare with 1000 attempts)
+                    print(f"Warning: Failed to place agent/goal after 1000 attempts in environment {i}. Placing randomly.")
+                    self.agent.set_pos(
+                        torch.tensor(
+                            [np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])],
+                            device=self.world.device,
+                        ).unsqueeze(0),
+                        batch_index=i,
+                    )
+                    self.goal.set_pos(
+                        torch.tensor(
+                            [np.random.uniform(x_range[0], x_range[1]), np.random.uniform(y_range[0], y_range[1])],
+                            device=self.world.device,
+                        ).unsqueeze(0),
+                        batch_index=i,
+                    )
 
 
     def process_action(self, agent: Agent):
@@ -562,7 +563,7 @@ class PathPlanningScenario(BaseScenario):
         
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
-        is_at_goal = dist < 0.10
+        is_at_goal = dist < 0.07
 
         progress = (self.prev_dist_to_goal - dist)
         decreased = progress >= 0
@@ -608,7 +609,7 @@ class PathPlanningScenario(BaseScenario):
         """
         # Distance to goal
         dist = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
-        reached_goal = dist < 0.10  # same threshold as in reward
+        reached_goal = dist < 0.07  # same threshold as in reward
 
         # Collision with any collidable entity
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)

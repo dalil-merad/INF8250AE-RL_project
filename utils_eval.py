@@ -342,7 +342,7 @@ def path_agent(checkpoint_path):
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(4.0)
+    env.scenario.set_max_dist(1.0)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
