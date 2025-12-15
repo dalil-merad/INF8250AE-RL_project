@@ -7,6 +7,10 @@ from vmas.simulator.utils import Color
 from environment.path_planning import PathPlanningScenario
 from agent.ddqn_agent import QNetwork
 from agent.params import Params
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.transforms import Affine2D
+import os
 
 # --- CONFIGURATION ---
 MODEL_FOLDER = "results/251214-181350/"
@@ -15,6 +19,8 @@ HYPERPARAM_PATH = MODEL_FOLDER + "hyperparameters.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_EVAL_EPISODES = 50
 RENDER_DELAY = 0.05  # Delay in seconds between steps for visualization
+EXPORT_TRAJECTORY = True  # Whether to export trajectory plots
+LIVE_DISPLAY = True  # Whether to show live rendering
 
 
 def load_hyperparameters(file_path):
@@ -40,6 +46,69 @@ def load_hyperparameters(file_path):
         print(f"\nHyperparamètres chargés avec succès depuis: {file_path}")
     except Exception as e:
         print(f"\nErreur lors du chargement des hyperparamètres: {e}")
+
+
+def plot_trajectory(trajectory, env, episode_idx, output_folder):
+    """
+    Plots the agent's trajectory, goal, and obstacles (walls/borders) and saves to file.
+    """
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    # 1. Setup Grid and Limits
+    world_size = Params.WORLD_SIZE
+    ax.set_xlim(-world_size - 0.5, world_size + 0.5)
+    ax.set_ylim(-world_size - 0.5, world_size + 0.5)
+    ax.set_aspect('equal')
+    ax.grid(True, which='both', linestyle='--', alpha=0.3)
+    ax.set_title(f"Episode {episode_idx} Trajectory")
+
+    # 2. Draw Walls and Borders
+    # Combine lists to iterate easily
+    obstacles = env.scenario.walls + env.scenario.border_segments
+
+    for obs in obstacles:
+        # Get data for env_index 0
+        pos = obs.state.pos[0].cpu().numpy()
+        rot = obs.state.rot[0].item()  # Radians
+        length = obs.shape.length
+        width = obs.shape.width
+
+        # Create Rectangle centered at (0,0) then transform
+        # Matplotlib Rectangle defined by bottom-left corner
+        rect = patches.Rectangle(
+            (-length / 2, -width / 2),
+            length, width,
+            color='black' if 'border' in obs.name else 'red',
+            alpha=0.6
+        )
+
+        # Apply rotation and translation
+        t = Affine2D().rotate(rot).translate(pos[0], pos[1]) + ax.transData
+        rect.set_transform(t)
+        ax.add_patch(rect)
+
+    # 3. Draw Goal
+    goal_pos = env.scenario.goal.state.pos[0].cpu().numpy()
+    goal_circle = patches.Circle(goal_pos, radius=Params.GOAL_RADIUS, color='green', alpha=0.7, label='Goal')
+    ax.add_patch(goal_circle)
+
+    # 4. Draw Trajectory
+    traj = np.array(trajectory)
+    if len(traj) > 0:
+        # Plot path line
+        ax.plot(traj[:, 0], traj[:, 1], color='blue', linewidth=2, label='Path', alpha=0.8)
+        # Plot start point
+        ax.scatter(traj[0, 0], traj[0, 1], color='blue', marker='o', s=50, label='Start')
+        # Plot end point
+        ax.scatter(traj[-1, 0], traj[-1, 1], color='purple', marker='x', s=50, label='End')
+
+    ax.legend(loc='upper right')
+
+    # 5. Save
+    save_path = os.path.join(output_folder, f"trajectory_ep_{episode_idx}.png")
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"Trajectory plot saved to: {save_path}")
 
 
 # --- CUSTOM SCENARIO FOR VISUALIZATION ---
@@ -113,50 +182,29 @@ class VisualizerScenario(PathPlanningScenario):
 def evaluate_visual():
     print(f"--- Initializing Environment for Visualization ---")
 
-    # 1. Create Environment using the CUSTOM VisualizerScenario
-    # This ensures n_agents is 3 (Robot + 2 Anchors) from the start.
+    # Ensure output folder exists for images
+    img_folder = os.path.join(MODEL_FOLDER, "trajectory_plots")
+    os.makedirs(img_folder, exist_ok=True)
+
+    # [Setup code remains the same...]
     env = make_env(
         scenario=VisualizerScenario(),
         num_envs=1,
         continuous_actions=False,
         max_steps=Params.MAX_STEPS_PER_EPISODE,
         device=DEVICE,
-        # seed=0,
         dict_spaces=True,
         multidiscrete_actions=True,
     )
-
-    # Set max difficulty to use full map
     env.scenario.set_max_dist(Params.L_MAX)
 
-    # 2. Inspect Environment
-    obs_dict = env.reset()
-    state_tensor = obs_dict["robot"]
-
-    if state_tensor.dim() == 4 and state_tensor.shape[0] == 1:
-        state_tensor = state_tensor.squeeze(0)
-
-    n_rays = state_tensor.shape[-1]
-    print(f"Detected N_LIDAR_RAYS: {n_rays}")
-
-    # 3. Load Network
+    # [Network loading code remains the same...]
     q_network = QNetwork(state_size=Params.CNN_INPUT_CHANNELS, action_size=Params.ACTION_SIZE).to(DEVICE)
-
-    try:
-        checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
-        q_network.load_state_dict(checkpoint)
-        print(f"Successfully loaded model from: {MODEL_PATH}")
-    except FileNotFoundError:
-        print(f"\nERROR: Could not find model file at: {MODEL_PATH}")
-        return
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        return
-
+    # ... load weights ...
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+    q_network.load_state_dict(checkpoint)
     q_network.eval()
 
-    # 4. Loop
-    # for episode in range(NUM_EVAL_EPISODES):
     episode = 0
     while True:
         episode += 1
@@ -164,7 +212,6 @@ def evaluate_visual():
 
         obs_dict = env.reset()
         state = obs_dict["robot"]
-
         if state.dim() == 4 and state.shape[0] == 1:
             state = state.squeeze(0)
 
@@ -172,41 +219,52 @@ def evaluate_visual():
         total_reward = 0
         step_count = 0
 
+        trajectory = []
+
         while not done:
-            # Render with agent_index_focus=None.
-            # VMAS will zoom out to fit the Robot AND the Anchors.
-            env.render(
-                mode="human",
-                env_index=0,
-                agent_index_focus=None
-            )
+            # 1. Record current position BEFORE stepping
+            current_pos = env.scenario.agent.state.pos[0].cpu().numpy().copy()
+            trajectory.append(current_pos)
+
+            # Optional: Render live window
+            if LIVE_DISPLAY:
+                env.render(mode="human", env_index=0, agent_index_focus=None)
 
             with torch.no_grad():
                 q_values = q_network(state)
                 action_idx = torch.argmax(q_values, dim=1)
 
             action_input = action_idx.unsqueeze(-1)
-
-            # --- Dummy Actions for Anchors ---
-            # Anchors expect (Batch, 2) continuous actions (forces). We send zeros.
             dummy_action = torch.zeros(1, 2, device=DEVICE)
 
-            # Now we send 3 actions, matching env.n_agents
+            # Step
             next_obs, rewards, dones, info = env.step([action_input, dummy_action, dummy_action])
 
+            # ... update logic ...
             next_state = next_obs["robot"]
             if next_state.dim() == 4 and next_state.shape[0] == 1:
                 next_state = next_state.squeeze(0)
 
-            reward = rewards["robot"]
-            total_reward += reward.item()
-            done = dones.any().item()
-
             state = next_state
+            total_reward += rewards["robot"].item()
+            done = dones.any().item()
             step_count += 1
-            time.sleep(RENDER_DELAY)
 
-        print(f"Episode {episode + 1} Finished. Total Reward: {total_reward:.2f}, Steps: {step_count}")
+            if LIVE_DISPLAY:
+                time.sleep(RENDER_DELAY)
+
+        if EXPORT_TRAJECTORY:
+            # We append the final position to complete the line
+            final_pos = env.scenario.agent.state.pos[0].cpu().numpy().copy()
+            trajectory.append(final_pos)
+
+            plot_trajectory(trajectory, env, episode, img_folder)
+
+        print(f"Episode {episode} Finished. Total Reward: {total_reward:.2f}")
+
+        # Break after N episodes if desired
+        if episode >= NUM_EVAL_EPISODES:
+            break
 
 
 if __name__ == "__main__":
