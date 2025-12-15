@@ -14,40 +14,21 @@ class QNetwork(nn.Module):
         # 1. Use the passed n_rays (from main_train.py), fallback to Params only if necessary
         self.n_rays = Params.N_LIDAR_RAYS
 
-        # 2. Determine if input is large enough for Convolutions
-        # We use 3 layers of Kernel=3. This roughly requires length >= 8 to be useful/safe.
-        # If n_rays is tiny (0, 1, 2, 5...), we skip convs to prevent crashes.
-        self.use_conv = self.n_rays >= 8
+        # Standard 1D Convolutions for Lidar sequences
+        self.conv1 = nn.Conv1d(in_channels=state_size, out_channels=16, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1)
+        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1)
 
-        if self.use_conv:
-            # Standard 1D Convolutions for Lidar sequences
-            self.conv1 = nn.Conv1d(in_channels=state_size, out_channels=16, kernel_size=3, stride=2, padding=1)
-            self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1)
-            self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1)
-        else:
-            # Fallback for tiny inputs: No layers here, we will just flatten in forward()
-            pass
-
-        # 3. AUTOMATIC SIZE CALCULATION
         # Run a dummy pass to check output size.
-        # This handles ANY n_rays (0, 10, 360) without math errors.
+        # This handles variable n_rays (0, 10, 360) without math errors.
         with torch.no_grad():
             dummy_input = torch.zeros(1, state_size, self.n_rays)
 
-            if self.use_conv:
-                x = self.conv1(dummy_input)
-                x = self.conv2(x)
-                x = self.conv3(x)
-            else:
-                # If skipping convs, pass input directly
-                x = dummy_input
+            x = self.conv1(dummy_input)
+            x = self.conv2(x)
+            x = self.conv3(x)
 
-            self.flat_size = x.view(1, -1).size(1)
-
-            if self.flat_size == 0 and self.n_rays == 0:
-                print(
-                    "WARNING: n_rays is 0. The network input is empty. "
-                    "The agent is blind and will rely solely on bias.")
+            self.flat_size = int(x.view(1, -1).size(1))
 
         self.fc1 = nn.Linear(self.flat_size, 256)
         self.fc2 = nn.Linear(256, action_size)
@@ -55,13 +36,9 @@ class QNetwork(nn.Module):
     def forward(self, state):
         # state shape: (Batch, 4, N_RAYS)
 
-        if self.use_conv:
-            x = F.relu(self.conv1(state))
-            x = F.relu(self.conv2(x))
-            x = F.relu(self.conv3(x))
-        else:
-            # If input is too small for convs, just use it as is (or flatten it)
-            x = state
+        x = F.relu(self.conv1(state))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
 
         # Flatten
         x = x.reshape(x.shape[0], -1)

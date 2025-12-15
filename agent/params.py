@@ -12,7 +12,7 @@ class Params:
     LIDAR_RANGE = 2.0  # Portée maximale du LIDAR (en m)
 
     # ---  Hyperparamètres (basés sur le rapport et les pratiques RL) ---
-    NUM_EPISODES = 2_000_000
+    NUM_EPISODES = 40_000
     # Taux d'apprentissage de l'optimiseur Adam
     LEARNING_RATE = 0.0005
     # Taux de décroissance du learning rate (exponential decay)
@@ -20,14 +20,14 @@ class Params:
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
-    EPSILON_START = 1.0
+    EPSILON_START = .5
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
     # epsilon decay adjusted to reach EPSILON_MIN near the end of training (exponential decay)
 
     # EPSILON_DECAY = np.exp(2 * np.log(EPSILON_MIN) / NUM_EPISODES)
-    EPSILON_DECAY = 0.9995
+    EPSILON_DECAY = 0.995  # (per batch not per step)
     CNN_INPUT_CHANNELS = 4  # (Angle, Distance, Goal x, Goal y)
     ACTION_SIZE = 8        # 8 directions de mouvement [cite: 107]
     WORLD_SIZE = 2.0  # Taille de l'environnement (carré de -2m à 2m)

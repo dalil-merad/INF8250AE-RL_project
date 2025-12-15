@@ -13,8 +13,8 @@ MODEL_FOLDER = "results/251214-181350/"
 MODEL_PATH = MODEL_FOLDER + "ddqn_q_network.pt"
 HYPERPARAM_PATH = MODEL_FOLDER + "hyperparameters.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_EVAL_EPISODES = 10
-RENDER_DELAY = 0.05
+NUM_EVAL_EPISODES = 50
+RENDER_DELAY = 0.05  # Delay in seconds between steps for visualization
 
 
 def load_hyperparameters(file_path):
