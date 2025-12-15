@@ -11,7 +11,6 @@ class QNetwork(nn.Module):
     def __init__(self, state_size, action_size):
         super(QNetwork, self).__init__()
 
-        # 1. Use the passed n_rays (from main_train.py), fallback to Params only if necessary
         self.n_rays = Params.N_LIDAR_RAYS
 
         # Standard 1D Convolutions for Lidar sequences
