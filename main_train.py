@@ -198,6 +198,9 @@ def training_loop():
         else:
             # Aucun env n'est terminé: tous avancent avec next_state_tensor
             state_tensor = next_state_tensor
+        
+        # Mise à jour Epsilon (par batch d'entraînement)
+        epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
 
         # --- Entraînement DDQN: déclenché par le nombre d'échantillons ajoutés ---
         # Fréquence: tous les NUM_ENVS * TRAINING_FREQUENCY_STEPS échantillons ajoutés
@@ -225,13 +228,12 @@ def training_loop():
             loss = criterion(predicted_q_values, target_q_values)
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(q_network.parameters(), Params.MAX_GRADIENT_NORM)
             optimizer.step()
+            soft_update(q_network, target_q_network, Params.TAU)
 
             current_loss = loss.item()
             cumulative_loss += current_loss
-
-            # Mise à jour Epsilon (par batch d'entraînement)
-            epsilon = max(Params.EPSILON_MIN, epsilon * Params.EPSILON_DECAY)
             
             # Mise à jour Learning rate (par batch d'entraînement)
             scheduler.step()
@@ -243,8 +245,9 @@ def training_loop():
             training_step += 1
 
         # --- Mise à jour du réseau cible à une fréquence en nombre de steps ---
-        if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
-            target_q_network.load_state_dict(q_network.state_dict())
+
+        #if training_step % Params.TARGET_UPDATE_FREQUENCY == 0:
+        #    target_q_network.load_state_dict(q_network.state_dict())
         
         if training_step % 100 == 0:
             losses.append(np.mean(cumulative_loss/100))
@@ -279,6 +282,14 @@ def save_agent(q_network, filename="ddqn_q_network.pt"):
         print(f"\nModèle Q-Network sauvegardé avec succès dans: {filename}")
     except Exception as e:
         print(f"\nErreur lors de la sauvegarde du modèle: {e}")
+
+def soft_update(local_model, target_model, tau):
+    """
+    Met à jour les poids du réseau cible (target) en utilisant 
+    le Polyak Averaging (mise à jour douce).
+    """
+    for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+        target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
 
 if __name__ == "__main__":
     # Sauvegarde de l'agent entraîné

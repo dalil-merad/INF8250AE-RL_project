@@ -506,7 +506,7 @@ class PathPlanningScenario(BaseScenario):
             # Robot speed is calculated to ensure a fixed 0.1m displacement per step.
             # Speed = (0.1m) / dt. Current dt=0.1, so speed=1.0.
             speed = 0.1 / self.world.dt
-            diag_speed = speed * 0.707
+            diag_speed = speed /np.sqrt(2)
 
             u = agent.action.u[:, 0]      # (B,), values in [-1, 1]
             n = 8 #Number of discrete actions
@@ -521,15 +521,15 @@ class PathPlanningScenario(BaseScenario):
             # 0: Up, 1: Down, 2: Left, 3: Right
             mask_0 = (action_index == 0)
             vy[mask_0] = speed
-            rot[mask_0] = 1.57
+            rot[mask_0] = np.pi/2
             
             mask_1 = (action_index == 1)
             vy[mask_1] = -speed
-            rot[mask_1] = -1.57
+            rot[mask_1] = -np.pi/2
             
             mask_2 = (action_index == 2)
             vx[mask_2] = -speed
-            rot[mask_2] = 3.14
+            rot[mask_2] = np.pi
             
             mask_3 = (action_index == 3)
             vx[mask_3] = speed
@@ -537,16 +537,16 @@ class PathPlanningScenario(BaseScenario):
             
             # Diagonals
             mask_4 = (action_index == 4) # FL
-            vx[mask_4] = -diag_speed; vy[mask_4] = diag_speed; rot[mask_4] = 2.35
+            vx[mask_4] = -diag_speed; vy[mask_4] = diag_speed; rot[mask_4] = 3*np.pi/4
             
             mask_5 = (action_index == 5) # FR
-            vx[mask_5] = diag_speed; vy[mask_5] = diag_speed; rot[mask_5] = 0.78
+            vx[mask_5] = diag_speed; vy[mask_5] = diag_speed; rot[mask_5] = np.pi/4
             
             mask_6 = (action_index == 6) # BL
-            vx[mask_6] = -diag_speed; vy[mask_6] = -diag_speed; rot[mask_6] = -2.35
+            vx[mask_6] = -diag_speed; vy[mask_6] = -diag_speed; rot[mask_6] = -3*np.pi/4
             
             mask_7 = (action_index == 7) # BR
-            vx[mask_7] = diag_speed; vy[mask_7] = -diag_speed; rot[mask_7] = -0.78
+            vx[mask_7] = diag_speed; vy[mask_7] = -diag_speed; rot[mask_7] = -np.pi/4
 
             # Revert to Direct Velocity Control (Kinematic)
             agent.state.vel[:, 0] = vx
@@ -570,8 +570,8 @@ class PathPlanningScenario(BaseScenario):
         increased = progress < 0
 
         #Lidar penalty
-        MIN_DIST_THRESHOLD = 0.25 # 1.0m de distance réelle (0.5 * 2.0m)
-        PROXIMITY_PENALTY_SCALE = 0.5 # Ajustez ce facteur
+        MIN_DIST_THRESHOLD = 0.35 # 0.7m de distance réelle (0.35 * 2.0m)
+        PROXIMITY_PENALTY_SCALE = 1.5 # Ajustez ce facteur
 
         lidar_distances = agent.sensors[0].measure()
         min_dist = torch.min(lidar_distances, dim=-1).values
@@ -580,8 +580,6 @@ class PathPlanningScenario(BaseScenario):
         penalty_magnitude = MIN_DIST_THRESHOLD - min_dist[too_close_mask]
         proximity_penalty[too_close_mask] = -PROXIMITY_PENALTY_SCALE * penalty_magnitude
 
-
-
         # Collision Check
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
         for entity in self.world.agents + self.world.landmarks:
@@ -589,11 +587,11 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 5.0
-        rews[is_collision] -= 10.0
-        rews[decreased] += 0.5
+        rews[is_at_goal] += 10.0
+        rews[is_collision] -= 5.0
+        rews[decreased] += 0.7
         rews[increased] -= 0.5
-        rews += -0.01 # Time penalty
+        rews += -0.2 # Time penalty
         rews += proximity_penalty
 
         self.prev_dist_to_goal = dist.clone().detach()        

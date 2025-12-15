@@ -9,7 +9,7 @@ class Params:
     # Taux d'apprentissage initial de l'optimiseur Adam
     LEARNING_RATE_MIN = 0.00001
     #Taux de décroissance du learning rate
-    LEARNING_DECAY = 0.9999
+    LEARNING_DECAY = 1
     # Facteur d'actualisation (Discount factor) [cite: 64]
     GAMMA = 0.99
     # Epsilon initial pour l'exploration [cite: 221]
@@ -17,11 +17,15 @@ class Params:
     # Epsilon minimum
     EPSILON_MIN = 0.01
     # Taux de décroissance Epsilon (dépend du nombre total d'étapes)
-    EPSILON_DECAY = 0.9999  
+    EPSILON_DECAY = 0.9999
+    # Définition de l'hyperparamètre d'écrêtage (norme maximale)
+    MAX_GRADIENT_NORM = 10.0 # À ajuster, 10.0 est une bonne valeur de départ
+    # Taux de mise à jour douce du réseau cible
+    TAU = 0.005 # Valeur typique entre 0.001 et 0.01
 
     # Paramètres du Replay Buffer [cite: 262, 266]
     REPLAY_BUFFER_CAPACITY = 80000
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64
     TRAINING_START_STEPS = 20000  # Remplissage du buffer avant l'entraînement [cite: 264]
     TRAINING_FREQUENCY_STEPS = 4       # Entraînement toutes les 4 étapes [cite: 265]
     TARGET_UPDATE_FREQUENCY = 400  # Mise à jour du réseau cible tous les C pas

@@ -4,8 +4,8 @@
 # # W : Wall/Obstacle
 # # S : Start position
 # # U : Goal position
-ACTIVE_MAPS_TRAINING = (0,)  # Maps used during training
-ACTIVE_MAPS_EVALUATION = (0,)  # Map used during evaluation
+ACTIVE_MAPS_TRAINING = (0,1,2)  # Maps used during training
+ACTIVE_MAPS_EVALUATION = (3,)  # Map used during evaluation
 MAP_LAYOUTS = {
     0: [  # Map 0: Empty - No obstacles
         "............................",

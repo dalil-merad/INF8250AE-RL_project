@@ -24,8 +24,8 @@ def generate_plots(results):
         average_cumulutativ_reward(results["average_reward"], output_path)
     if results["loss"]:
         l = len(results["loss"])
-        loss_plot(results["first_loss"][int(l/8):int(2*l/8)], output_path, "first")
-        loss_plot(results["first_loss"][int(6*l/8):int(l)-1], output_path, "end")
+        loss_plot(results["loss"][int(l/8):int(2*l/8)], output_path, "first")
+        loss_plot(results["loss"][int(6*l/8):int(l)-1], output_path, "end")
     #if results["eval_reward"]:
     #    eval_reward(results["eval_reward"], output_path)
 
@@ -342,7 +342,7 @@ def path_agent(checkpoint_path):
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(1.0)
+    env.scenario.set_max_dist(1.5)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
