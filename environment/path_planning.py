@@ -509,11 +509,14 @@ class PathPlanningScenario(BaseScenario):
             speed = 0.1 / self.world.dt
             diag_speed = speed * 0.707
 
-            u = agent.action.u[:, 0]      # (B,), values in [-1, 1]
-            n = 8 #Number of discrete actions
-            #This needs to happen because VMAS does some weird 
-            # continuous mapping and provides the action as a continuous value in [-1, 1]
-            action_index = torch.round((u + 1) / 2 * (n - 1)).long().clamp(0, n-1)
+            u = agent.action.u[:, 0]
+            n = 8
+
+            # IMPORTANT:
+            # If env was created with multidiscrete_actions=True, u is (semantically) already in {0..7}.
+            # If env was created with multidiscrete_actions=False, u may be a continuous proxy in [-1,1] OR an index,
+            # depending on wrapper plumbing. Remapping an index as if it were [-1,1] will corrupt the action.
+            action_index = torch.round((u + 1) / 2 * (n - 1)).long().clamp(0, n - 1)
             
             vx = torch.zeros_like(action_index, dtype=torch.float32)
             vy = torch.zeros_like(action_index, dtype=torch.float32)
@@ -561,10 +564,14 @@ class PathPlanningScenario(BaseScenario):
         # +1 if reach goal
         # -1 if collision
         # -0.01 time penalty
+
+        # Only robot gets reward (and only robot updates prev_dist_to_goal)
+        if agent.name != "robot":  
+            return torch.zeros(self.world.batch_dim, device=self.world.device)
         
         # Distance to goal
         dist = torch.linalg.norm(agent.state.pos - self.goal.state.pos, dim=-1)
-        is_at_goal = dist < 0.10
+        is_at_goal = dist < 0.05
 
         progress = (self.prev_dist_to_goal - dist)
         decreased = progress >= 0
@@ -590,12 +597,13 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 10.0
-        rews[is_collision] -= 5.0
-        rews[decreased] += 0.5
-        rews[increased] -= 0.5
+        rews[is_at_goal] += 1.0
+        rews[is_collision] -= 1.0
+        rews += 2.0 * progress
+        #rews[decreased] += 1.0
+        #rews[increased] -= 1.0
         rews += -0.01 # Time penalty
-        rews += proximity_penalty
+        #rews += proximity_penalty
 
         self.prev_dist_to_goal = dist.clone().detach()        
         return rews
@@ -610,7 +618,7 @@ class PathPlanningScenario(BaseScenario):
         """
         # Distance to goal
         dist = torch.linalg.norm(self.agent.state.pos - self.goal.state.pos, dim=-1)
-        reached_goal = dist < 0.10  # same threshold as in reward
+        reached_goal = dist < 0.05  # same threshold as in reward
 
         # Collision with any collidable entity
         is_collision = torch.zeros(self.world.batch_dim, device=self.world.device, dtype=torch.bool)
@@ -636,7 +644,12 @@ class PathPlanningScenario(BaseScenario):
             end=2 * np.pi,
             steps=self.n_lidar_rays + 1,
             device=device,
-        )[: self.n_lidar_rays].unsqueeze(0)
+        )[: self.n_lidar_rays]
+
+        # NEW: normalize lidar angles to the same range as atan2 -> [-pi, pi)
+        angle_vector = angle_vector - np.pi
+
+        angle_vector = angle_vector.unsqueeze(0)
         lidar_angles = angle_vector.repeat(batch_dim, 1) # (B, 360)
 
         # Empilement et Transposition: (B, 360, 2) -> (B, 2, 360)
@@ -654,12 +667,12 @@ class PathPlanningScenario(BaseScenario):
 
         # 2. Calcul de l'Angle (theta)
         # torch.atan2(Y, X) donne l'angle dans [-pi, pi]
-        angle = torch.atan2(delta_pos[:, 1], delta_pos[:, 0]).unsqueeze(1) # (B, 1)
+        angle = torch.atan2(delta_pos[:, 1], delta_pos[:, 0]).unsqueeze(1)  # (B, 1)
         agent_orientation = agent.state.rot
         angle = angle - agent_orientation
-        
-        # L'angle peut être normalisé si nécessaire, par exemple en divisant par pi 
-        # angle = angle / np.pi 
+
+        # NEW: wrap relative angle back to [-pi, pi) for stability/consistency
+        angle = torch.remainder(angle + np.pi, 2 * np.pi) - np.pi
 
         # Concaténation des coordonnées polaires (Distance, Angle)
         polar_coords = torch.cat((distance, angle), dim=1) # (B, 2)

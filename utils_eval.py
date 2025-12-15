@@ -13,13 +13,15 @@ from environment.map_layouts import MAP_LAYOUTS
 
 ACTION_MOUVEMENT_DETAILS = {0: "Haut", 1: "Bas", 2:"Gauche", 3:"Droite", 4:"Haut-Gauche", 5:"Haut-Droit", 6:"Bas-Gauche", 7:"Bas-Droit"}
 
-def generate_plots(results):
+def generate_plots(results, output_path: str):
     """
     :param results: Dict with the results needed for the plots
+    :param output_path: e.g. "results/<yy-mm-dd_HH:MM:SS>/"
     """
-    output_path = 'results/'+datetime.datetime.now().strftime('%y-%m-%d_%H:%M:%S')+'/'
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
+    if not output_path:
+        raise ValueError("output_path must be provided (e.g., results/<yy-mm-dd_HH:MM:SS>/).")
+    os.makedirs(output_path, exist_ok=True)
+
     if results["average_reward"]:
         average_cumulutativ_reward(results["average_reward"], output_path)
     if results["loss"]:
@@ -42,7 +44,7 @@ def eval_reward(rewards, path):
     plt.xlabel('Episode', fontsize=14)
     plt.ylabel('Episode reward', fontsize=14)
     plt.legend(fontsize=12)
-    file_name = path + f"episode_reward_eval.png"
+    file_name = os.path.join(path, "episode_reward_eval.png")
     plt.savefig(file_name)
 
 
@@ -61,7 +63,7 @@ def loss_plot(losses, path, step):
     plt.ylabel('Loss', fontsize=14)
     
     plt.legend(fontsize=12)
-    file_name = path + f"loss_{step}.png"
+    file_name = os.path.join(path, f"loss_{step}.png")
     plt.savefig(file_name)
 
 
@@ -78,7 +80,7 @@ def average_cumulutativ_reward(cumultative_Rewards, path):
     plt.ylabel('Average cumulative reward', fontsize=14)
     
     plt.legend(fontsize=12)
-    file_name = path + 'cumulative_reward_curve.png'
+    file_name = os.path.join(path, "cumulative_reward_curve.png")
     plt.savefig(file_name)
 
 def evaluate_agent(self):
@@ -190,8 +192,8 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
     # I. Définir le Départ et le But (ligne, colonne)
     # Le but 'S' est à (9, 12) dans la carte ci-dessus.
     # Nous allons choisir un point de départ.
-    start_pos = start_coords  # Par exemple, à la ligne 4, colonne 2 (à côté du mur WW)
-    goal_pos = goal_coords   # Le But 'S' (ligne 9, colonne 13)
+    #start_pos = start_coords  # Par exemple, à la ligne 4, colonne 2 (à côté du mur WW)
+    #goal_pos = goal_coords   # Le But 'S' (ligne 9, colonne 13)
 
     # II. Création de la grille numérique pour A*
     # Le caractère 'S' dans votre carte représente le but.
@@ -207,7 +209,7 @@ def plot_map_with_path(map_list, start_coords, goal_coords, agent_path = None):
                 a_star_grid[r, c] = 1 # Mur
 
     # III. Exécution de l'algorithme A*
-    path = find_path_a_star(a_star_grid, start_pos, goal_pos)
+    path = find_path_a_star(a_star_grid, start_coords, goal_coords)
     
     # 1. Préparation de la grille
     height = len(map_list)
@@ -342,7 +344,7 @@ def path_agent(checkpoint_path):
         multidiscrete_actions=True  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(4.0)
+    env.scenario.set_max_dist(0.2)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
@@ -415,7 +417,7 @@ if __name__ == "__main__":
     #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    eval_path_agent("ddqn_q_network_test3.pt")
+    eval_path_agent("/home/dalil/rl/INF8250AE-RL_project/results/25-12-14_20:27:41/25-12-14_20:27:41.pt")
 
 """
 results = {}
