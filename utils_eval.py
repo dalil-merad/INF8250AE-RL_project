@@ -337,12 +337,12 @@ def path_agent(checkpoint_path):
         continuous_actions=False,
         max_steps=100,
         device=DEVICE, 
-        training = False,
+        training = True,
         dict_spaces=True,
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(1.5)
+    env.scenario.set_max_dist(2.5)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
@@ -416,6 +416,7 @@ if __name__ == "__main__":
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
     eval_path_agent("test_ddqn.pt")
+    #eval_path_agent("ddqn_q_network.pt")
 
 """
 results = {}

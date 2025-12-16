@@ -587,11 +587,11 @@ class PathPlanningScenario(BaseScenario):
                  is_collision = is_collision | self.world.is_overlapping(agent, entity)
 
         rews = torch.zeros_like(dist)
-        rews[is_at_goal] += 10.0
-        rews[is_collision] -= 5.0
+        rews[is_at_goal] += 15.0
+        rews[is_collision] -= 8.0
         rews[decreased] += 0.7
         rews[increased] -= 0.5
-        rews += -0.2 # Time penalty
+        rews += -0.02 # Time penalty
         rews += proximity_penalty
 
         self.prev_dist_to_goal = dist.clone().detach()        
