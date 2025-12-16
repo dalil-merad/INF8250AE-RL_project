@@ -54,7 +54,7 @@ class PathPlanningScenario(BaseScenario):
         self.parsed_maps = {}
         for map_id, layout in MAP_LAYOUTS.items():
             w_count = sum(row.count('W') for row in layout)
-            m_count = sum(row.count('U') + row.count('S') for row in layout)
+            m_count = sum(row.count('U') for row in layout)
             self.max_static_walls = max(self.max_static_walls, w_count)
             self.max_moving_obstacles = max(self.max_moving_obstacles, m_count)
             

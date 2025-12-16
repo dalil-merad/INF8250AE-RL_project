@@ -415,8 +415,8 @@ if __name__ == "__main__":
     #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    #eval_path_agent("test_ddqn.pt")
-    eval_path_agent("ddqn_q_network.pt")
+    eval_path_agent("test_ddqn.pt")
+    #eval_path_agent("ddqn_q_network.pt")
 
 """
 results = {}
