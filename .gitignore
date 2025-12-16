@@ -1,0 +1,16 @@
+training_log.csv
+
+.idea/
+
+agent/__pycache__/
+environment/__pycache__/
+scenarios/__pycache__/
+*.pyc
+__pycache__/
+
+ddqn_q_network.pt
+test_ddqn.pt
+results/
+networks/
+
+logs/
