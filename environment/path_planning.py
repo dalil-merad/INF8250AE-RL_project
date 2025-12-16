@@ -444,12 +444,13 @@ class PathPlanningScenario(BaseScenario):
                     distance = np.random.uniform(0.13, self._max_dist)
 
                     goal_pos_candidate = agent_pos_np + distance * np.array([np.cos(angle), np.sin(angle)])
-
+                    
+                    border_padding = 0.2
                     # Clamp goal into bounds
                     goal_pos_np = np.array(
                         [
-                            np.clip(goal_pos_candidate[0], x_range[0], x_range[1]),
-                            np.clip(goal_pos_candidate[1], y_range[0], y_range[1]),
+                            np.clip(goal_pos_candidate[0], x_range[0]+ border_padding, x_range[1]- border_padding),
+                            np.clip(goal_pos_candidate[1], y_range[0]+ border_padding, y_range[1]- border_padding),
                         ]
                     )
 
@@ -467,6 +468,11 @@ class PathPlanningScenario(BaseScenario):
                     # Placement successful (agent first, then goal)
                     self.agent.set_pos(torch.tensor(agent_pos_np, device=self.world.device), batch_index=i)
                     self.goal.set_pos(torch.tensor(goal_pos_np, device=self.world.device), batch_index=i)
+
+                    possible_angles = [0.0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi, -np.pi/4, -np.pi/2]
+                    random_angle = np.random.choice(possible_angles)
+                    self.agent.set_rot(torch.tensor([random_angle], device=self.world.device), batch_index=i)
+
 
                     new_initial_dist = torch.linalg.norm(self.agent.state.pos[i] - self.goal.state.pos[i])
                     self.prev_dist_to_goal[i] = new_initial_dist.clone().detach()
@@ -571,7 +577,7 @@ class PathPlanningScenario(BaseScenario):
 
         #Lidar penalty
         MIN_DIST_THRESHOLD = 0.35 # 0.7m de distance réelle (0.35 * 2.0m)
-        PROXIMITY_PENALTY_SCALE = 1.5 # Ajustez ce facteur
+        PROXIMITY_PENALTY_SCALE = 4.0 # Ajustez ce facteur
 
         lidar_distances = agent.sensors[0].measure()
         min_dist = torch.min(lidar_distances, dim=-1).values
@@ -588,10 +594,10 @@ class PathPlanningScenario(BaseScenario):
 
         rews = torch.zeros_like(dist)
         rews[is_at_goal] += 15.0
-        rews[is_collision] -= 8.0
-        rews[decreased] += 0.7
-        rews[increased] -= 0.5
-        rews += -0.02 # Time penalty
+        rews[is_collision] -= 20.0
+        rews[decreased] += 0.5
+        rews[increased] -= 1.0
+        rews += -0.05 # Time penalty
         rews += proximity_penalty
 
         self.prev_dist_to_goal = dist.clone().detach()        

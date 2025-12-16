@@ -156,7 +156,7 @@ def update_L(n_steps):
     if n_steps <= Params.N1_THRESHOLD:
         L = Params.L_MIN
     elif Params.N1_THRESHOLD < n_steps < Params.N2_THRESHOLD:
-        L = Params.L_MIN + Params.M_SEARCH_SPEED * (n_steps - Params.N1_THRESHOLD)
+        L = Params.L_MIN +  Params.M_SEARCH_SPEED*(n_steps - Params.N1_THRESHOLD)
     else:
         L = Params.L_MAX
     

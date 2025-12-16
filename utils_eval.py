@@ -24,7 +24,7 @@ def generate_plots(results):
         average_cumulutativ_reward(results["average_reward"], output_path)
     if results["loss"]:
         l = len(results["loss"])
-        loss_plot(results["loss"][int(l/8):int(2*l/8)], output_path, "first")
+        loss_plot(results["loss"][int(2*l/8):int(3*l/8)], output_path, "first")
         loss_plot(results["loss"][int(6*l/8):int(l)-1], output_path, "end")
     #if results["eval_reward"]:
     #    eval_reward(results["eval_reward"], output_path)
@@ -337,12 +337,12 @@ def path_agent(checkpoint_path):
         continuous_actions=False,
         max_steps=100,
         device=DEVICE, 
-        training = True,
+        training = False,
         dict_spaces=True,
         multidiscrete_actions=False  # <- tell VMAS we use MultiDiscrete
     )
 
-    env.scenario.set_max_dist(2.5)
+    env.scenario.set_max_dist(3.5)
     state_dict = env.reset_at(0) # dict d'obs par agent
     state_tensor = state_dict["robot"]
 
@@ -415,8 +415,8 @@ if __name__ == "__main__":
     #robot_path = [[4, 3, 2 ,5, 6, 8, 9], [20, 20, 18, 15, 16, 14, 13]]
     # 4. Tracé du résultat
     #plot_map_with_path(map_data, start_pos, goal_pos, robot_path)
-    eval_path_agent("test_ddqn.pt")
-    #eval_path_agent("ddqn_q_network.pt")
+    #eval_path_agent("test_ddqn.pt")
+    eval_path_agent("ddqn_q_network.pt")
 
 """
 results = {}
