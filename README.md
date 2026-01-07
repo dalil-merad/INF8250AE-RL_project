@@ -1,4 +1,4 @@
-# FROM WAYPOINT-FOLLOWING TO GOAL-GIRECTED NAVIGATION: DQN FOR LOCAL PATH PLANNING WITHOUT A GLOBAL PLANNER
+# FROM WAYPOINT-FOLLOWING TO GOAL-DIRECTED NAVIGATION: DQN FOR LOCAL PATH PLANNING WITHOUT A GLOBAL PLANNER
 
 This repository is a project for the course **INF8250AE: Reinforcement Learning** at École Polytechnique Montréal. It is a reimplementation and adaptation of the paper:
 
@@ -277,3 +277,4 @@ BibTeX (paper):
 * The original research paper by Lei et al.
 * VMAS + TorchRL ecosystem for vectorized RL simulation/training
 * INF8250AE course context and evaluation framework
+
